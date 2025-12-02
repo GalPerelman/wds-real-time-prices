@@ -7,13 +7,13 @@ from matplotlib import ticker as mtick
 class OptGraphs:
     def __init__(self, opt_model):
         self.opt_model = opt_model
-        self.x_fsp = opt_model.x_fsp
-        self.x_vsp = opt_model.x_vsp
+        self.x_fsp_value = opt_model.x_fsp_value
+        self.x_vsp_value = opt_model.x_vsp_value
         self.t = self.opt_model.t
 
     def tank_volume(self, tank_id, plot_dem=False, plot_tariff=False, sample=None, ax=None):
         vol = self.opt_model.network.get_tank_vol(t=self.opt_model.t, tank_id=tank_id,
-                                                  x_fsp=self.x_fsp, x_vsp=self.x_vsp, sample=sample)
+                                                  x_fsp=self.x_fsp_value, x_vsp=self.x_vsp_value, sample=sample)
         if ax is None:
             fig, ax = plt.subplots()
 

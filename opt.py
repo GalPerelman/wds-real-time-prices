@@ -32,9 +32,16 @@ class BaseOptModel:
         self.one_comb_only()
 
         self.formulation_start = None
+        self.x = None
+        self.y = None
         self.problem = None
         self.omega_param = None
         self.constraints = []
+
+        # empty solution placeholders
+        self.x_fsp_value = None
+        self.x_vsp_value = None
+        self.x_value = None
 
     def get_bool_vector(self):
         bool_vector = np.hstack([np.tile(1, self.n_fsp),
@@ -165,16 +172,16 @@ class BaseOptModel:
 
     def formulate(self):
         a, b, c = self.construct_nominal_matrix()
-        x = cp.Variable(self.n_var * self.t, boolean=False)#self.get_bool_vector())
-        prob = cp.Problem(cp.Minimize(c @ x), [a @ x <= b])
+        self.x = cp.Variable(self.n_var * self.t, boolean=False)  # self.get_bool_vector())
+        prob = cp.Problem(cp.Minimize(c @ self.x), [a @ self.x <= b])
         prob.solve(solver=cp.ECOS)
         print("Status:", prob.status)
         print("Optimal value", prob.value)
-        self.x_fsp = x.value.reshape(self.t, self.n_fsp + self.n_vsp)[:, :self.n_fsp]
-        self.x_vsp = x.value.reshape(self.t, self.n_fsp + self.n_vsp)[:, self.n_fsp:]
-        g = graphs.OptGraphs(self)
-        g.all_tanks(plot_tariff=True)
-        plt.show()
+
+    def extract_solution(self):
+        self.x_fsp_value = self.x.value.reshape(self.t, self.n_fsp + self.n_vsp)[:, :self.n_fsp]
+        self.x_vsp_value = self.x.value.reshape(self.t, self.n_fsp + self.n_vsp)[:, self.n_fsp:]
+        self.x_value = self.x.value
 
 
 class RO(BaseOptModel):
@@ -204,8 +211,6 @@ class RO(BaseOptModel):
         self.m = int(self.a.shape[0])
         self.p = int(self.sigma.shape[0])
 
-        self.x = None
-        self.y = None
 
     def preprocess(self):
         a, b, c = self.construct_nominal_matrix()
@@ -325,18 +330,14 @@ class RO(BaseOptModel):
         self.extract_solution()
         return prob.status, prob.value
 
-    def extract_solution(self):
-        self.x_fsp = self.x.value.reshape(self.t, self.n_fsp + self.n_vsp)[:, :self.n_fsp]
-        self.x_vsp = self.x.value.reshape(self.t, self.n_fsp + self.n_vsp)[:, self.n_fsp:]
-        self.x_sol = self.x.value
 
 
 class Simulation:
     def __init__(self, opt_model, n=1000):
 
         self.opt_model = opt_model
-        self.x_fsp = opt_model.x_fsp
-        self.x_vsp = opt_model.x_vsp
+        self.x_fsp_value = opt_model.x_fsp_value
+        self.x_vsp_value = opt_model.x_vsp_value
 
         self.n = n
         self.t = self.opt_model.t
@@ -367,7 +368,7 @@ class Simulation:
     def calculate_tank_volumes(self, plot=False):
         for tank_idx, (tank_name, tank_data) in enumerate(self.opt_model.network.tanks.iterrows()):
             net_inflow_mat = self.opt_model.tanks_balance_mat[tank_idx * self.t: tank_idx * self.t + self.t, :]
-            net_inflow = net_inflow_mat @ self.opt_model.x_sol
+            net_inflow = net_inflow_mat @ self.opt_model.x_value
             init_vol = np.tile(self.opt_model.network.tanks.loc[tank_name, 'init_vol'], self.t).reshape(-1, 1)
 
             demand_sample = self.sample[self.t + tank_idx * self.t: self.t + tank_idx * self.t + self.t:, :]
