@@ -190,7 +190,7 @@ class LPNetwork:
         mat = np.tril(np.ones((t, t)))
         if sample is None:
             tank_consumer_id = self.tanks.loc[tank_id, "demand"]
-            cumm_tank_consumption = self.demands.iloc[:t].loc[:, tank_consumer_id].values.cumsum()
+            cumm_tank_consumption = self.demands.iloc[:t].loc[:, tank_consumer_id].values.cumsum().reshape(-1, 1)
         else:
             cumm_tank_consumption = sample.cumsum(axis=0)
 
