@@ -183,6 +183,45 @@ class BaseOptModel:
         self.x_vsp_value = self.x.value.reshape(self.t, self.n_fsp + self.n_vsp)[:, self.n_fsp:]
         self.x_value = self.x.value
 
+    def get_nominal(self):
+        tariff = self.network.tariffs["tariff"].values[:self.t]
+        demands = self.network.demands.values[:self.t, :].flatten(order='F')
+        return np.hstack([tariff, demands])
+
+    def preprocess_data_for_uncertainty_sets(self):
+        tariff = self.network.tariffs["tariff"]
+        demands = self.network.demands
+        tariff.index = pd.to_datetime(tariff.index, utc=True)
+        demands.index = pd.to_datetime(demands.index, utc=True)
+
+        common_index = tariff.index.intersection(demands.index)
+
+        tariff = tariff.loc[common_index]
+        demands = demands.loc[common_index]
+        elec_demand_data = pd.concat([tariff, demands], axis=1)
+        elec_demand_data.index = pd.to_datetime(elec_demand_data.index, dayfirst=True)
+        return elec_demand_data
+
+    def get_ellipsoid_uncertainty_set(self, plot=False):
+        """
+        Can be used for RO but also for sampling-based methods where we need mu and Sigma
+        """
+        preprocessed_data = self.preprocess_data_for_uncertainty_sets()
+        est = uncertainty_utils.SpatioTemporalEllipsoidUncertaintyEstimator(
+            seasonal_demean=True,  # remove hour-of-day baseline
+            drop_incomplete_windows=True  # require full 24h days
+        )
+        est.fit(preprocessed_data)
+        u = est.get_uncertainty_set(horizon=self.t, start_hour=0, use_residuals=False)
+        mu, sigma = u.mu, u.Sigma
+
+        if plot:
+            plt.imshow(sigma[:self.t, :self.t], cmap='viridis')
+            plt.figure()
+            plt.imshow(sigma[self.t:, self.t:], cmap='viridis')
+            plt.show()
+        return mu, sigma
+
 
 class RO(BaseOptModel):
     """
@@ -221,41 +260,6 @@ class RO(BaseOptModel):
         constraints = np.hstack([np.zeros((a.shape[0], 1)), a, -1 * b.reshape(-1, 1)])
         return np.vstack([epigraph_obj, constraints])
 
-    def get_uncertainty_set(self, plot=False):
-        """
-
-        :return:
-        """
-        tariff = self.network.tariffs["tariff"]
-        demands = self.network.demands
-        tariff.index = pd.to_datetime(tariff.index, utc=True)
-        demands.index = pd.to_datetime(demands.index, utc=True)
-
-        common_index = tariff.index.intersection(demands.index)
-
-        tariff = tariff.loc[common_index]
-        demands = demands.loc[common_index]
-        elec_demand_data = pd.concat([tariff, demands], axis=1)
-        elec_demand_data.index = pd.to_datetime(elec_demand_data.index, dayfirst=True)
-        est = uncertainty_utils.SpatioTemporalUncertaintyEstimator(
-            seasonal_demean=True,  # remove hour-of-day baseline
-            drop_incomplete_windows=True  # require full 24h days
-        )
-        est.fit(elec_demand_data)
-        u = est.get_uncertainty_set(horizon=self.t, start_hour=0, use_residuals=True)
-        mu, sigma = u.mu, u.Sigma
-
-        if plot:
-            plt.imshow(sigma[:self.t, :self.t], cmap='viridis')
-            plt.figure()
-            plt.imshow(sigma[self.t:, self.t:], cmap='viridis')
-            plt.show()
-        return mu, sigma
-
-    def get_nominal(self):
-        tariff = self.network.tariffs["tariff"].values[:self.t]
-        demands = self.network.demands.values[:self.t, :].flatten(order='F')
-        return np.hstack([tariff, demands])
 
     def get_mapping_matrix(self):
         """
