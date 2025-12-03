@@ -13,9 +13,11 @@ pd.set_option('display.width', 1000)
 
 
 class BaseOptModel:
-    def __init__(self, network, t, solver_params=None, solver_display=False, **kwargs):
+    def __init__(self, network, t, forecast, database, solver_params=None, solver_display=False, **kwargs):
         self.network = network
         self.t = t
+        self.forecast = forecast
+        self.database = database
         self.solver_params = solver_params
         self.solver_display = solver_display
 
@@ -27,6 +29,8 @@ class BaseOptModel:
 
         # inequality constraints are saved in dicts {name: mat1, name: mat2..], [name: b1, name:b2..]
         self.ineq_mat, self.ineq_rhs = {}, {}
+
+        self.apply_forecast()
 
         self.build_mass_balance()
         self.one_comb_only()
@@ -42,6 +46,10 @@ class BaseOptModel:
         self.x_fsp_value = None
         self.x_vsp_value = None
         self.x_value = None
+
+    def apply_forecast(self):
+        self.network.demands = self.forecast.iloc[:, 1:].copy()
+        self.network.tariffs = self.forecast.iloc[:, :1].copy()
 
     def get_bool_vector(self):
         bool_vector = np.hstack([np.tile(1, self.n_fsp),
@@ -202,25 +210,25 @@ class BaseOptModel:
         elec_demand_data.index = pd.to_datetime(elec_demand_data.index, dayfirst=True)
         return elec_demand_data
 
-    def get_ellipsoid_uncertainty_set(self, plot=False):
+    def get_ellipsoid_uncertainty_set(self, database, plot=False):
         """
         Can be used for RO but also for sampling-based methods where we need mu and Sigma
         """
-        preprocessed_data = self.preprocess_data_for_uncertainty_sets()
+        # preprocessed_data = self.preprocess_data_for_uncertainty_sets()
         est = uncertainty_utils.SpatioTemporalEllipsoidUncertaintyEstimator(
             seasonal_demean=True,  # remove hour-of-day baseline
             drop_incomplete_windows=True  # require full 24h days
         )
-        est.fit(preprocessed_data)
+        est.fit(database)
         u = est.get_uncertainty_set(horizon=self.t, start_hour=0, use_residuals=False)
-        mu, sigma = u.mu, u.Sigma
+        self.mu, self.sigma = u.mu, u.Sigma
 
         if plot:
             plt.imshow(sigma[:self.t, :self.t], cmap='viridis')
             plt.figure()
             plt.imshow(sigma[self.t:, self.t:], cmap='viridis')
             plt.show()
-        return mu, sigma
+        return self.mu, self.sigma
 
 
 class RO(BaseOptModel):
@@ -241,7 +249,12 @@ class RO(BaseOptModel):
         self.omega = omega
 
         self.a = np.asarray(self.preprocess().astype(np.float64))
-        self.mu, self.sigma = self.get_uncertainty_set()
+
+        # ellipsoid uncertainty set
+        self.mu = None
+        self.sigma = None
+
+        self.get_ellipsoid_uncertainty_set(self.database)
         self.delta = np.linalg.cholesky(self.sigma)
         self.delta = np.asarray(self.delta.astype(np.float64))
 

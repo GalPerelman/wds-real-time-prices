@@ -171,16 +171,15 @@ class LPNetwork:
         self.fsp = pd.read_csv(os.path.join(self.data_dir, 'fsp.csv'), index_col=0)
         self.vsp = pd.read_csv(os.path.join(self.data_dir, 'vsp.csv'), index_col=0)
         self.tanks = pd.read_csv(os.path.join(self.data_dir, 'tanks.csv'), index_col=0)
-        self.demands = pd.read_csv(os.path.join(self.data_dir, 'demands.csv'), index_col=0)
-        self.tariffs = pd.read_csv(os.path.join(self.data_dir, 'tariffs.csv'), index_col=0)
+
+        # placeholder for forecast values
+        self.demands = None
+        self.tariffs = None
 
         self.n_fsp = len(self.fsp)
         self.n_stations = self.fsp["name"].nunique()
         self.n_vsp = len(self.vsp)
         self.n_tanks = len(self.tanks)
-
-        # Make sure nomissing data in the tariff data set
-        self.tariffs = utils.data_completion(self.tariffs[["tariff"]])
 
     def get_tank_demand(self, t, tank_id):
         tank_consumer_id = self.tanks.loc[tank_id, "demand"]
