@@ -276,9 +276,14 @@ class RO(BaseOptModel):
 
     def get_mapping_matrix(self):
         """
-        This method generate the matrix that mapa uncertain parameters to constraints
-        :return:
+        This method generate the matrix that maps uncertain parameters to constraints
+        Each constraint has its own mapping matrix of size (n_variables, uncertainty_dimension)
+        The map denotes which uncertain parameters (col) affect each coefficient (row) in the constraint
+
+        The first row is the objective variable - no coefficients affected by uncertainty
+        The last row is the RHS - can be uncertain and is mapped accordingly
         """
+
         def build_price_matrix():
             mat = np.zeros((self.n, self.p), dtype=np.float64)
             for t in range(self.t):
@@ -287,18 +292,35 @@ class RO(BaseOptModel):
 
             return mat
 
+        # def build_demand_matrix(tank_idx, t):
+        #     mat = np.zeros((self.n, self.p), dtype=np.float64)
+        #     mat[-1, self.t + tank_idx * self.t + t] = 1.0
+        #     return mat
+
         def build_demand_matrix(tank_idx, t):
             mat = np.zeros((self.n, self.p), dtype=np.float64)
-            mat[-1, self.t + tank_idx * self.t + t] = 1.0
+            # The RHS of the mass balance constraint at time 't' is a function of
+            # the cumulative sum of demands up to 't'. Therefore, this constraint
+            # is affected by uncertainty in demands from time 0 to t.
+            start_uncertainty_idx = self.t + tank_idx * self.t
+            end_uncertainty_idx = start_uncertainty_idx + t + 1
+            mat[-1, start_uncertainty_idx:end_uncertainty_idx] = 1.0
             return mat
 
         matrices = [build_price_matrix()]
 
+        # Mass balance constraints appear in two large blocks:
+        # first all tank upper bounds, then all tank lower bounds
+        # Respect that ordering so each constraint gets the proper demand mapping.
+        tank_rows = []
+        tank_rows_lower = []
         for tank_idx in range(self.n_tanks):
-            tank_matrices = []
             for t in range(self.t):
-                tank_matrices.append(build_demand_matrix(tank_idx, t))
-            matrices.extend(tank_matrices * 2)  # each tank has upper and lower bound constraints with same mapping
+                tank_rows.append(build_demand_matrix(tank_idx, t))
+                tank_rows_lower.append(build_demand_matrix(tank_idx, t))
+
+        matrices.extend(tank_rows)
+        matrices.extend(tank_rows_lower)
 
         # one comb only constraints - no uncertainty mapping
         for i in range(self.t * self.network.n_stations):
@@ -309,16 +331,6 @@ class RO(BaseOptModel):
         for i in range(self.n_var * self.t * 2):
             mat = np.zeros((self.n, self.p), dtype=np.float64)
             matrices.append(mat)
-
-        # old - optionally with an error
-        # for j in range(self.a.shape[0]):  # iterate on constraints and build mapping matrices
-        #     mat = np.zeros((self.n, self.p), dtype=float)
-        #     if j == 0:  # this is the objective row
-        #         mat[1:-1, :] = build_price_matrix()
-        #
-        #     elif 0 < j <= int(self.T * self.n_tanks):  # these are the mass balance constraints
-        #         mat[-1, self.T + j - 1] = 1.0
-        #     matrices.append(mat)
 
         return matrices
 
