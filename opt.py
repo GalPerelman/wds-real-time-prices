@@ -2,6 +2,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import cvxpy as cp
 import pandas as pd
+from scipy.stats import norm
 
 import graphs
 import uncertainty_utils
@@ -353,6 +354,124 @@ class RO(BaseOptModel):
             constraints.append(self.a[i, :] @ x_augmented + self.omega * tau[i] <= 0.0)
 
         prob = cp.Problem(cp.Minimize(self.y), constraints)
+
+
+class SP(BaseOptModel):
+    """ Stochastic Optimization with Sample Average Approximation (SAA) and Chance Constraints """
+    def __init__(self, network, t, epsilon, alpha, objective_quantile=None, sampling_method="normal", n=100, **kwargs):
+        super().__init__(network, t, **kwargs)
+
+        self.epsilon = epsilon  # allowed violation rate
+        self.alpha = alpha  # decay rate for time-varying epsilons
+        self.objective_quantile = objective_quantile
+        self.n = n  # number of samples
+        self.sampling_method = sampling_method
+
+        self.mu = None
+        self.sigma = None
+        self.get_ellipsoid_uncertainty_set(self.database)
+
+        self.sampler = uncertainty_utils.Sampler(self.mu, self.sigma, p=self.n_tanks + 1, n=self.n,
+                                                 sampling_method=self.sampling_method)
+        self.sample = self.sampler.draw_sample()  # shape (p, n) where p is uncertainty dimension - p = n_tanks + 1
+
+    def get_power_block_3d(self):
+        power_blocks = np.concatenate([
+            self.network.fsp['power'].values,  # shape (n_fsp,)
+            np.zeros(self.n_vsp)  # shape (n_vsp,)
+        ])  # shape (n_pumps,)
+
+        # Reshape for broadcasting over samples: (t, 1, n_fsp + n_vsp)
+        power_blocks = np.tile(power_blocks, (self.t, 1))  # shape: (t, n_pumps)
+        power_blocks_3d = power_blocks[:, None, :]
+        return power_blocks_3d
+
+    def sample_objective(self):
+        power_blocks_3d = self.get_power_block_3d()
+
+        # Build tariff for all samples. convert prices_samples from (t, n_samples) to (t, n_samples, n_fsp + n_vsp)
+        tariff_blocks = np.zeros((self.t, self.n, self.n_fsp + self.n_vsp))
+
+        # For each time t and sample s, repeat the price over the n_fsp pumps
+        # prices_samples[:, :, None] has shape (t, n_samples, 1)
+        # last n_vsp entries stay zero
+        prices_samples = self.sample[:self.t, :]  # (t, n)
+        tariff_blocks[:, :, :self.n_fsp] = prices_samples[:, :,
+                                           None]  # broadcast price over pumps, shape: (t, n_samples, n_fsp)
+
+        # Elementwise multiply to get c for each (t, pump, sample)
+        c_blocks = tariff_blocks * power_blocks_3d  # shape: (t, n_samples, n_fsp + n_vsp)
+
+        # Flatten time + pumps into one variable index. shape: (n_vars, n_samples)
+        c_samples = c_blocks.reshape(self.t * (self.n_fsp + self.n_vsp), self.n)
+
+        return c_samples
+
+    def quantile_objective(self):
+        power_blocks_3d = self.get_power_block_3d()
+
+        prices_samples = self.sample[:self.t, :]  # (t, n)
+        tariff_q = np.quantile(prices_samples, self.objective_quantile, axis=1)  # (t,)
+        tariff_blocks_q = np.zeros((self.t, 1, self.n_fsp + self.n_vsp))
+        tariff_blocks_q[:, 0, :self.n_fsp] = tariff_q[:, None]  # repeat over pumps
+        c_blocks_q = tariff_blocks_q * power_blocks_3d  # (t, 1, n_pumps)
+        c_quantile = c_blocks_q.reshape(self.t * (self.n_fsp + self.n_vsp))
+
+        return c_quantile
+
+    def formulate(self):
+        a, b, c_nominal = self.construct_nominal_matrix()
+        self.x = cp.Variable(self.n_var * self.t, boolean=False)  # self.get_bool_vector())
+
+        ######  Building the stochstic objective  ########
+        # The below functions build the objective coefficients:
+        # multiply the pumps power by the sampled tariffs
+        # repeat the same price for all pumps for every time step
+        # c_all_sample is the matrix of objective coefficients for all samples - can be used for expected objective
+        # c_quantile is the vector of objective coefficients for the quantile-based objective
+        if self.objective_quantile is None:
+            # SAA objective - based on average of all samples
+            c_all_sample = self.sample_objective()
+            obj = (1 / self.n) * cp.sum(c_all_sample.T @ self.x)
+        else:
+            c_quantile = self.quantile_objective()
+            obj = cp.sum(c_quantile.T @ self.x)
+
+        ######  Building the Chance Constraints  ########
+        # We want to develop a variance expression for each constraint.
+        # RHS (for each tank and time) = sum of demands up to constraint time for that tank = sum_t(d_tank,t)
+        # The variance of the RHS is given as:
+        # var(RHS) = var(sum_t d_tank,t) = sum_i sum_j cov(d_i, d_j)
+        # If we capture this time dependency via a mapping matrix delta, we can write:
+        #     RHS_vector = delta @ demands_vector
+        # where each row of delta selects and sums the relevant demands for one constraint.
+        # Then, for each constraint i:
+        #     var_i   = delta_i @ Sigma_demands @ delta_i.T
+        #     sigma_i = sqrt(var_i)
+        m = self.t * self.n_tanks  # number of mass balance constraints (only for upper bound, will double later)
+        delta = np.zeros((m, self.t * self.n_tanks))
+        for tank_idx in range(self.n_tanks):
+            for t in range(self.t):
+                delta[self.t * tank_idx + t, self.t * tank_idx: tank_idx * self.t + t + 1] = 1.0
+
+        delta_upper = delta  # shape (m, demands_dim)
+        delta_lower = delta  # same mapping: var(sum(d)) = var(-sum(d))
+        delta_full = np.vstack([delta_upper, delta_lower])  # shape (2m, demands_dim)
+
+        var_rhs = delta_full @ self.sigma[self.t:, self.t:] @ delta_full.T  # remove prices from sigma, shape (2m, 2m)
+        sigma_rhs = np.sqrt(np.diag(var_rhs))  # shape (2m,)
+
+        time_idx = np.tile(np.arange(self.t), self.n_tanks * 2)  # shape (2m,)
+        safety_coef = np.minimum(0.2, self.epsilon * (self.alpha ** time_idx))  # shape (2m,)
+
+        # quantiles z_i = phi^{-1}(1 - safety_coef)
+        z = norm.ppf(1 - safety_coef)  # shape (2m,)
+
+        # safe RHS for each constraint
+        b_safe = b[:m * 2] - z * sigma_rhs  # shape (2m,)
+        constraints = [a[:m * 2, :] @ self.x <= b_safe, a[m * 2:, :] @ self.x <= b[m * 2:]]
+
+        prob = cp.Problem(cp.Minimize(obj), constraints)
         prob.solve(solver=cp.ECOS)
         print("Status:", prob.status)
         print("Optimal value", prob.value)
