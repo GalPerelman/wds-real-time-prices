@@ -64,10 +64,26 @@ class BaseOptModel:
         Construct the bus power balance matrix for the case of equality constraints
         variables order (matrix columns), for t in range(self.t):
         [fsp 0, fsp 1 ... fsp N | vsp 0, vsp 1 ... vsp N]
+
+        order of constraints in the matrix:
+        tank 0 upper bound t=0
+        tank 0 upper bound t=1
+        ...
+        tank 0 upper bound t=T
+        tank 1 upper bound t=0
+        ...
+        tank N upper bound t=T
+        tank 0 lower bound t=0
+        tank 0 lower bound t=1
+        ...
+        tank N lower bound t=T
+
         """
         mat = np.zeros((self.n_tanks * self.t * 2, self.n_var * self.t))
         rhs = np.zeros(self.n_tanks * self.t * 2)
         for tank_idx, (tank_id, tank_data) in enumerate(self.network.tanks.iterrows()):
+
+            # upper bound constraints
             tank_demand = self.network.get_tank_demand(self.t, tank_id)
             for t in range(self.t):
                 r = tank_idx * self.t + t
@@ -87,6 +103,7 @@ class BaseOptModel:
             tanks_ub_rhs = tanks_ub_rhs + tank_demand.values[:self.t].cumsum()
             rhs[tank_idx * self.t: tank_idx * self.t + self.t] = tanks_ub_rhs
 
+            # lower bound constraints
             for t in range(self.t):
                 r = self.n_tanks * self.t + tank_idx * self.t + t
                 for fsp_idx, fsp_data in self.network.fsp.iterrows():

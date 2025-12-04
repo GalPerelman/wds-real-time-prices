@@ -18,7 +18,7 @@ class UncertaintyResult:
     hours_per_window: int     # usually 24
 
 
-class SpatioTemporalUncertaintyEstimator:
+class SpatioTemporalEllipsoidUncertaintyEstimator:
     """
     Estimate mean (mu) and covariance (Sigma) of a stacked daily vector:
         y = [var1(h=0..23), var2(h=0..23), ..., varK(h=0..23)]  in R^{24*K}
@@ -71,7 +71,7 @@ class SpatioTemporalUncertaintyEstimator:
 
     # ------------------------- Public API -------------------------
 
-    def fit(self, df: pd.DataFrame) -> "SpatioTemporalUncertaintyEstimator":
+    def fit(self, df: pd.DataFrame) -> "SpatioTemporalEllipsoidUncertaintyEstimator":
         """Fit on an hourly DataFrame with a DatetimeIndex and numeric columns."""
         df = self._validate_and_prepare(df)
         vars_ = self.variables_in or [c for c in df.columns if np.issubdtype(df[c].dtype, np.number)]
