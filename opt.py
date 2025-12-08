@@ -519,9 +519,11 @@ class Simulation:
 
         self.tank_volumes = {}
         self.violations = pd.DataFrame()
+        self.costs = pd.Series()
 
         self.sample = self.draw_sample()
         self.calculate_tank_volumes()
+        self.calculate_cost()
 
     def draw_sample(self):
         rng = np.random.default_rng(seed=42)
@@ -564,6 +566,31 @@ class Simulation:
             tank_violations = np.logical_or(np.any(vol.T - tank_lb < 0, axis=1), np.any(tank_ub - vol.T < 0, axis=1))
             self.violations[tank_name] = tank_violations
 
+    def calculate_cost(self):
+        power_blocks = np.concatenate([
+            self.opt_model.network.fsp['power'].values,  # shape (n_fsp,)
+            np.zeros(self.opt_model.n_vsp)  # shape (n_vsp,)
+        ])  # shape (n_pumps,)
+
+        # Reshape for broadcasting over samples: (t, 1, n_fsp + n_vsp)
+        power_blocks = np.tile(power_blocks, (self.t, 1))  # shape: (t, n_pumps)
+        power_blocks_3d = power_blocks[:, None, :]
+
+        # Build tariff for all samples. convert prices_samples from (t, n_samples) to (t, n_samples, n_fsp + n_vsp)
+        tariff_blocks = np.zeros((self.t, self.n, self.opt_model.n_fsp + self.opt_model.n_vsp))
+
+        # For each time t and sample s, repeat the price over the n_fsp pumps
+        # prices_samples[:, :, None] has shape (t, n_samples, 1)
+        # last n_vsp entries stay zero
+        prices_samples = self.sample[:self.t, :]  # (t, n)
+        tariff_blocks[:, :, :self.opt_model.n_fsp] = prices_samples[:, :, None]  # broadcast price over pumps
+        # Elementwise multiply to get c for each (t, pump, sample)
+        c_blocks = tariff_blocks * power_blocks_3d  # shape: (t, n_samples, n_fsp + n_vsp)
+
+        # Flatten time + pumps into one variable index. shape: (n_vars, n_samples)
+        c_samples = c_blocks.reshape(self.t * (self.opt_model.n_fsp + self.opt_model.n_vsp), self.n)
+        costs = c_samples.T @ self.opt_model.x_value
+        self.costs = pd.Series(costs)
     def summarize(self):
         violations_rate = self.violations.any(axis=1).sum() / self.n
         print(f"Violations rate: {violations_rate:.2%}")
