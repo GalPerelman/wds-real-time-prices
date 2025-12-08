@@ -36,6 +36,7 @@ class BaseOptModel:
         self.build_mass_balance()
         self.one_comb_only()
 
+        self.tanks_balance_mat = None  # the mass balance mat is saved as a property to support tank simulations
         self.formulation_start = None
         self.x = None
         self.y = None
@@ -121,7 +122,8 @@ class BaseOptModel:
             tanks_lb_rhs = np.tile(tank_data['init_vol'] - tank_data['min_vol'], self.t)
             tanks_lb_rhs = tanks_lb_rhs - tank_demand.values[:self.t].cumsum()
             tanks_lb_rhs[-1] = tank_data['init_vol'] - tank_data['final_vol'] - tank_demand.values[:self.t].sum()
-            rhs[self.n_tanks * self.t + tank_idx * self.t: self.n_tanks * self.t + tank_idx * self.t + self.t] = tanks_lb_rhs
+            rhs[self.n_tanks * self.t + tank_idx * self.t:
+                self.n_tanks * self.t + tank_idx * self.t + self.t] = tanks_lb_rhs
 
         self.ineq_mat["mass_balance"] = mat
         self.ineq_rhs["mass_balance"] = rhs
@@ -149,8 +151,11 @@ class BaseOptModel:
             start_col = self.n_var * t
 
             for i, station in enumerate(self.network.fsp["name"].unique()):
-                k = len(self.network.fsp.loc[self.network.fsp["name"] == station])  # num combs for station
-                i = self.network.fsp.loc[self.network.fsp["name"] == station].iloc[0].name  # idx of first comb for station
+                # num combs for station
+                k = len(self.network.fsp.loc[self.network.fsp["name"] == station])
+
+                # idx of first comb for station
+                i = self.network.fsp.loc[self.network.fsp["name"] == station].iloc[0].name
                 w = self.network.fsp.index.get_loc(i)
                 mat[row, start_col + w: start_col + w + k] = 1
                 row += 1
@@ -352,7 +357,7 @@ class RO(BaseOptModel):
 
         return matrices
 
-    def formulate_rc(self):
+    def formulate_ellipsoid_rc(self):
         mapping_mats = self.get_mapping_matrix()
         # Precompute multiplication of mapping matrices with delta
         constraints_mapping_matrices = [mat @ self.delta for mat in mapping_mats]
@@ -371,6 +376,11 @@ class RO(BaseOptModel):
             constraints.append(self.a[i, :] @ x_augmented + self.omega * tau[i] <= 0.0)
 
         prob = cp.Problem(cp.Minimize(self.y), constraints)
+        prob.solve(solver=cp.MOSEK)
+        print("Status:", prob.status)
+        print("Optimal value", prob.value)
+        self.extract_solution()
+        return prob.status, prob.value
 
 
 class SP(BaseOptModel):
