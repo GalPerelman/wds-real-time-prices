@@ -31,12 +31,22 @@ class BaseOptModel:
         # inequality constraints are saved in dicts {name: mat1, name: mat2..], [name: b1, name:b2..]
         self.ineq_mat, self.ineq_rhs = {}, {}
 
+        # the mass balance mat is saved as a property to support tank simulations
+        self.tanks_balance_mat = None
+
+        # Set the nominal electricity prices and demands for the current solution
         self.apply_forecast()
 
+        # build the nominal problem
         self.build_mass_balance()
         self.one_comb_only()
 
-        self.tanks_balance_mat = None  # the mass balance mat is saved as a property to support tank simulations
+        # For uncertain models
+        # Ellipsoid uncertainty set
+        self.mu = None
+        self.sigma = None
+        
+        # Optimization placeholders
         self.formulation_start = None
         self.x = None
         self.y = None
@@ -252,7 +262,6 @@ class BaseOptModel:
             plt.figure()
             plt.imshow(sigma[self.t:, self.t:], cmap='viridis')
             plt.show()
-        return self.mu, self.sigma
 
 
 class RO(BaseOptModel):
@@ -273,10 +282,6 @@ class RO(BaseOptModel):
         self.omega = omega
 
         self.a = np.asarray(self.preprocess().astype(np.float64))
-
-        # ellipsoid uncertainty set
-        self.mu = None
-        self.sigma = None
 
         self.get_ellipsoid_uncertainty_set(self.database)
         self.delta = np.linalg.cholesky(self.sigma)
@@ -395,8 +400,6 @@ class SP(BaseOptModel):
         self.n = n  # number of samples
         self.sampling_method = sampling_method
 
-        self.mu = None
-        self.sigma = None
         self.get_ellipsoid_uncertainty_set(self.database)
 
         self.sampler = uncertainty_utils.Sampler(self.mu, self.sigma, p=self.n_tanks + 1, n=self.n,
