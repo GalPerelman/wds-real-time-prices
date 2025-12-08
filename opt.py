@@ -227,8 +227,9 @@ class BaseOptModel:
 
         common_index = tariff.index.intersection(demands.index)
 
-        tariff = tariff.loc[common_index]
-        demands = demands.loc[common_index]
+        tariff = tariff.loc[common_index].sort_index()
+        demands = demands.loc[common_index].sort_index()
+
         elec_demand_data = pd.concat([tariff, demands], axis=1)
         elec_demand_data.index = pd.to_datetime(elec_demand_data.index, dayfirst=True)
         return elec_demand_data
