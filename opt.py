@@ -377,8 +377,14 @@ class RO(BaseOptModel):
 
         tau = cp.Variable(self.m, nonneg=True)  # one SOC slack per row
 
+        power, tariff = self.objective()  # we need to multiply the pumps power by the uncertain part of the prices
+
         constraints = []
         for i in range(self.m):
+            mapping_i = constraints_mapping_matrices[i]  # n x p
+            # applying the power on the uncertain tariffs
+            mapping_i[1: -1, :] *= power
+
             # SOC of constraint i: ||mapping_mat^T @ x_aug||_2 <= t[i]
             constraints.append(cp.norm(constraints_mapping_matrices[i].T @ x_augmented, 2) <= tau[i])
             # Linear_i: A_full[i] @ x_aug + omega * t[i] <= 0
