@@ -279,9 +279,10 @@ class RO(BaseOptModel):
     The cov matrix dimensions are: n_time_steps (electricity prices) + n_time_steps * n_tanks (demands)
     The mapping should be such that first n_time_steps rows are for electricity prices
     """
-    def __init__(self, network, t, omega, **kwargs):
+    def __init__(self, network, t, omega=None, gamma=None, **kwargs):
         super().__init__(network, t, **kwargs)
         self.omega = omega
+        self.gamma = gamma
 
         self.a = np.asarray(self.preprocess().astype(np.float64))
 
@@ -390,6 +391,102 @@ class RO(BaseOptModel):
         if prob.status == "optimal":
             self.extract_solution()
         return prob.status, prob.value
+
+    def get_bou_deviations(self, k: float) -> np.ndarray:
+        """
+        Extract the deviations for Budget of Uncertainty (Bertsimas–Sim):
+        radii ρ_j for each primitive uncertain parameter, sorted similarly to self.mu, self.sigma ordering:
+        [prices (t), demands (t * n_tanks)].
+
+        :param k:
+            The magnitude of the deviation impact
+            This is equivalent to the inverse_phi in the SP model, e.g. the multiplier of the std
+        """
+        if not hasattr(self, "sigma"):
+            raise RuntimeError("sigma not set. Call get_ellipsoid_uncertainty_set(...) first.")
+
+        std_full = np.sqrt(np.diag(self.sigma))  # shape (p,)
+        rho = k * std_full  # shape (p,)
+        return rho
+
+    def formulate_bou_rc(self, k=1):
+        """
+        Budget of Uncertainty robust counterpart using dual π, θ formulation (Bertsimas–Sim)
+        on the epigraph system:
+            [ -y + c^T x <= 0 ]
+            [  A x - b   <= 0 ]
+
+        Uncertainty:
+        - Prices (first t entries of zeta) affect the objective row.
+        - Demands (last t * n_tanks entries) affect the mass-balance rows
+          through the cumulative-demand mapping in get_mapping_matrix().
+
+        k             : scales std -> ρ_j = k * std_j
+        gamma         : a tuple containg the budget of uncertainty as (gamma_obj, gamma_constraints)
+                        allowing tho set different budgets for each uncertainty.
+                        this is required to avoid extreme costs in the robust solutions
+        """
+
+        mapping_mats = self.get_mapping_matrix()          # list of length m, each (n, p)
+        rho = self.get_bou_deviations(k)                  # shape (p,)
+
+        # Decision variables
+        self.y = cp.Variable(nonneg=True)                           # epigraph scalar
+        self.x = cp.Variable(self.n - 2, nonneg=True, boolean=self.get_bool_vector())  # original decision vector
+        x_aug = cp.hstack([self.y, self.x, 1.0])                    # [y; x; 1]
+
+        # Bertsimas–Sim aux variables
+        pi = cp.Variable(self.m, nonneg=True)                               # π_i per row
+        theta = [cp.Variable(self.p, nonneg=True) for _ in range(self.m)]   # θ_i (vector) per row
+
+        constraints = []
+
+        # Number of mass-balance constraints (upper only)
+        m_mb = self.t * self.n_tanks    # upper
+
+        # row 0          : objective
+        # rows 1..m_mb   : tank upper bounds
+        # rows m_mb+1..2*m_mb : tank lower bounds
+
+        power, tariff = self.objective()  # we need to multiply the pumps power by the uncertain part of the prices
+        gamma_obj, gamma = self.gamma
+        for i in range(self.m):
+            a_i = self.a[i, :]                 # 1 x n
+            mapping_i = mapping_mats[i]        # n x p
+
+            # fapplying the power on the uncertain tariffs
+            mapping_i[1: -1, :] *= power
+
+            # Effect of each primitive uncertainty j on row i
+            effect = mapping_i.T @ x_aug       # shape (p,)
+            s_i = cp.multiply(rho, effect)     # q_expr_j = ρ_j * effect_j >= 0
+
+            # Choose Gamma for this row
+            if i == 0:
+                # objective row: prices only
+                g = gamma_obj
+            elif 1 <= i <= 2 * m_mb:
+                # mass-balance rows: demands only
+                g = gamma
+            else:
+                # other constraints: no BS uncertainty
+                g = 0.0
+
+            # Robust constraint: a_i^T x_aug + Γ_i * π_i + sum_j θ_ij <= 0
+            constraints.append(a_i @ x_aug + g * pi[i] + cp.sum(theta[i]) <= 0)
+
+            # Linking constraints: θ_ij >= s_i[j] - π_i
+            constraints.append(theta[i] >= s_i - pi[i])
+
+        prob = cp.Problem(cp.Minimize(self.y), constraints)
+        prob.solve(solver=cp.GUROBI,
+                   verbose=self.solver_display,
+                   )
+
+        print("Status:", prob.status)
+        print("Optimal value", prob.value)
+        if prob.status == "optimal":
+            self.extract_solution()
         return prob.status, prob.value
 
 
