@@ -215,7 +215,9 @@ class BaseOptModel:
         a, b, c = self.construct_nominal_matrix()
         self.x = cp.Variable(self.n_var * self.t, boolean=False)  # self.get_bool_vector())
         prob = cp.Problem(cp.Minimize(c @ self.x), [a @ self.x <= b])
-        prob.solve(solver=cp.ECOS)
+        prob.solve(solver=cp.GUROBI)
+        if prob.status == "optimal":
+            self.extract_solution()
         print("Status:", prob.status)
         print("Optimal value", prob.value)
 
@@ -385,7 +387,9 @@ class RO(BaseOptModel):
         prob.solve(solver=cp.MOSEK)
         print("Status:", prob.status)
         print("Optimal value", prob.value)
-        self.extract_solution()
+        if prob.status == "optimal":
+            self.extract_solution()
+        return prob.status, prob.value
         return prob.status, prob.value
 
 
