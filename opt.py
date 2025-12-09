@@ -107,7 +107,7 @@ class BaseOptModel:
 
                 for vsp_idx, vsp_data in self.network.vsp.iterrows():
                     if vsp_data['in'] == tank_id:
-                        cols = [self.n_var * _ + self.n_fsp + vsp_idx - 1 for _ in range(t + 1)]
+                        cols = [self.n_var * _ + self.n_fsp + vsp_idx for _ in range(t + 1)]
                         mat[r, cols] = 1
 
             tanks_ub_rhs = np.tile(-tank_data['init_vol'] + tank_data['max_vol'], self.t)
@@ -126,7 +126,7 @@ class BaseOptModel:
 
                 for vsp_idx, vsp_data in self.network.vsp.iterrows():
                     if vsp_data['in'] == tank_id:
-                        cols = [self.n_var * _ + self.n_fsp + vsp_idx - 1 for _ in range(t + 1)]
+                        cols = [self.n_var * _ + self.n_fsp + vsp_idx for _ in range(t + 1)]
                         mat[r, cols] = -1
 
             tanks_lb_rhs = np.tile(tank_data['init_vol'] - tank_data['min_vol'], self.t)
