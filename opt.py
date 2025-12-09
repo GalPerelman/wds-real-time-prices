@@ -304,10 +304,10 @@ class RO(BaseOptModel):
         constraints = np.hstack([np.zeros((a.shape[0], 1)), a, -1 * b.reshape(-1, 1)])
         return np.vstack([epigraph_obj, constraints])
 
-
     def get_mapping_matrix(self):
         """
-        This method generate the matrix that maps uncertain parameters to constraints
+        Generating the matrix that maps uncertain parameters to constraints for both RO models
+
         Each constraint has its own mapping matrix of size (n_variables, uncertainty_dimension)
         The map denotes which uncertain parameters (col) affect each coefficient (row) in the constraint
 
@@ -473,6 +473,12 @@ class SP(BaseOptModel):
             obj = cp.sum(c_quantile.T @ self.x)
 
         ######  Building the Chance Constraints  ########
+        # We assume the demand part of the uncertainty vector is ordered as:
+        # [tank0_t0, ..., tank0_t{T}, tank1_t0, ..., tank1_t{T}, ...].
+        # For each tank and time t, the RHS involves the cumulative sum of demands
+        # from time 0...t, so each row has ones in those positions.
+
+        # Computing the variance and STD for every constraint RHS
         # We want to develop a variance expression for each constraint.
         # RHS (for each tank and time) = sum of demands up to constraint time for that tank = sum_t(d_tank,t)
         # The variance of the RHS is given as:
@@ -483,6 +489,8 @@ class SP(BaseOptModel):
         # Then, for each constraint i:
         #     var_i   = delta_i @ Sigma_demands @ delta_i.T
         #     sigma_i = sqrt(var_i)
+        #
+        # b_i = b_i_nom + sum_j(delta_i * std_j * inverse_phi(epsilon))
         m = self.t * self.n_tanks  # number of mass balance constraints (only for upper bound, will double later)
         delta = np.zeros((m, self.t * self.n_tanks))
         for tank_idx in range(self.n_tanks):
