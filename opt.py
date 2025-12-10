@@ -14,13 +14,14 @@ pd.set_option('display.width', 1000)
 
 
 class BaseOptModel:
-    def __init__(self, network, t, forecast, database, solver_params=None, solver_display=False, **kwargs):
+    def __init__(self, network, t, forecast, database, solver_params=None, solver_display=False, milp=True, **kwargs):
         self.network = network
         self.t = t
         self.forecast = forecast
         self.database = database
         self.solver_params = solver_params
         self.solver_display = solver_display
+        self.milp = milp
 
         # for matrices dimensions
         self.n_fsp, self.n_vsp, self.n_tanks = self.network.n_fsp, self.network.n_vsp, self.network.n_tanks
@@ -64,11 +65,20 @@ class BaseOptModel:
         self.network.tariffs = self.forecast.iloc[:, :1].copy()
 
     def get_bool_vector(self):
-        bool_vector = np.hstack([np.tile(1, self.n_fsp),
-                                 np.tile(0, self.n_vsp),
-                                 ])
-        bool_vector = [tuple(np.tile(bool_vector, self.t))]
-        return bool_vector
+        if not self.milp:
+            return False
+        else:
+            bool_vector = ()
+
+            # For each time step, mark the first n_fsp elements as boolean
+            for i in range(self.t):
+                start_idx = i * (self.n_fsp + self.n_vsp)
+                end_idx = start_idx + self.n_fsp
+                for _ in range(start_idx, end_idx):
+                    bool_vector = bool_vector + (_, )
+
+            bool_vector = (np.array(bool_vector, dtype=int),)
+            return bool_vector
 
     def build_mass_balance(self):
         """
@@ -372,7 +382,7 @@ class RO(BaseOptModel):
         constraints_mapping_matrices = [mat @ self.delta for mat in mapping_mats]
 
         self.y = cp.Variable(nonneg=True)  # objective epigraph scalar
-        self.x = cp.Variable(self.n - 2, nonneg=True)  # decision vector
+        self.x = cp.Variable(self.n - 2, nonneg=True, boolean=self.get_bool_vector())  # decision vector
         x_augmented = cp.hstack([self.y, self.x, 1.0])  # [y; x; 1]  (last entry is constant)
 
         tau = cp.Variable(self.m, nonneg=True)  # one SOC slack per row
@@ -559,7 +569,7 @@ class SP(BaseOptModel):
 
     def formulate(self):
         a, b, c_nominal = self.construct_nominal_matrix()
-        self.x = cp.Variable(self.n_var * self.t, boolean=False)  # self.get_bool_vector())
+        self.x = cp.Variable(self.n_var * self.t, boolean=self.get_bool_vector())
 
         ######  Building the stochstic objective  ########
         # The below functions build the objective coefficients:
