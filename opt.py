@@ -519,9 +519,9 @@ class SP(BaseOptModel):
 
         self.get_ellipsoid_uncertainty_set(self.database)
 
-        self.sampler = uncertainty_utils.Sampler(self.mu, self.sigma, p=self.n_tanks + 1, n=self.n,
-                                                 sampling_method=self.sampling_method)
-        self.sample = self.sampler.draw_sample()  # shape (p, n) where p is uncertainty dimension - p = n_tanks + 1
+        self.sampler = uncertainty_utils.Sampler(self.mu, self.sigma, p=self.sigma.shape[0], t=self.t, n=self.n)
+        # sample shape = (p, n) where p is uncertainty dimension - p = n_tanks + 1
+        self.sample = self.sampler.draw_sample(sampling_method=self.sampling_method)
 
     def get_power_block_3d(self):
         power_blocks = np.concatenate([
@@ -636,40 +636,36 @@ class SP(BaseOptModel):
 
 
 
-class Simulation:
-    def __init__(self, opt_model, n=1000):
 
+class Simulation:
+    def __init__(self, opt_model, sampling_method, n=1000):
         self.opt_model = opt_model
+        self.sampling_method = sampling_method
         self.x_fsp_value = opt_model.x_fsp_value
         self.x_vsp_value = opt_model.x_vsp_value
 
         self.n = n
         self.t = self.opt_model.t
+        self.p = self.opt_model.sigma.shape[0]
+        self.rng = np.random.default_rng(seed=42)
 
         self.tank_volumes = {}
         self.violations = pd.DataFrame()
         self.costs = pd.Series()
 
-        self.sample = self.draw_sample()
+        self.mu = self.opt_model.get_nominal()
+        self.cov = self.opt_model.sigma
+        self.sampler = uncertainty_utils.Sampler(mu=self.mu, cov=self.cov, p=self.p, t=self.t, n=self.n)
+
+        self.sample = self.sampler.draw_sample("normal")
+        self.sampler.plot_samples(self.sample)
+        self.sample = self.sampler.draw_sample("uniform")
+        self.sampler.plot_samples(self.sample)
+
+        self.sample = self.sampler.draw_sample(sampling_method=self.sampling_method)
+
         self.calculate_tank_volumes()
         self.calculate_cost()
-
-    def draw_sample(self):
-        rng = np.random.default_rng(seed=42)
-        mu = self.opt_model.get_nominal()
-
-        # Identify indices where mu is not zero
-        non_zero_indices = np.nonzero(mu)[0]
-        # Extract the non-zero entries from mu and the corresponding rows and columns from cov
-        mu_non_zero = mu[non_zero_indices]
-        cov_non_zero = self.opt_model.sigma[np.ix_(non_zero_indices, non_zero_indices)]
-        # Draw samples from the modified distribution
-        samples_non_zero = rng.multivariate_normal(mu_non_zero, cov_non_zero, size=self.n).T
-        # Create an output array filled with zeros of the original shape
-        output_samples = np.zeros((len(self.opt_model.mu), self.n))
-        # Insert the non-zero samples back into the correct positions
-        output_samples[non_zero_indices] = samples_non_zero
-        return output_samples
 
     def calculate_tank_volumes(self, plot=False):
         for tank_idx, (tank_name, tank_data) in enumerate(self.opt_model.network.tanks.iterrows()):

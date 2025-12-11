@@ -331,6 +331,50 @@ class SpatioTemporalEllipsoidUncertaintyEstimator:
         return {k * H + h: (self.variables_[k], h) for k in range(K) for h in range(H)}
 
 
+class Sampler:
+    def __init__(self, mu, cov, p, t, n: int, data=None):
+        self.mu = mu
+        self.cov = cov
+        self.p = p  # uncertainty dimension
+        self.n = n
+        self.t = t
+
+        self.rng = np.random.default_rng(seed=42)
+
+    def draw_sample(self, sampling_method):
+        if sampling_method in ['gaussian', 'ellipsoid', 'normal']:
+            return self.draw_gaussian_sample()
+        if sampling_method in ['uniform']:
+            return self.draw_uniform_sample()
+
+    def draw_gaussian_sample(self):
+        # Identify indices where mu is not zero
+        non_zero_indices = np.nonzero(self.mu)[0]
+        # Extract the non-zero entries from mu and the corresponding rows and columns from cov
+        mu_non_zero = self.mu[non_zero_indices]
+        cov_non_zero = self.cov[np.ix_(non_zero_indices, non_zero_indices)]
+        # Draw samples from the modified distribution
+        samples_non_zero = self.rng.multivariate_normal(mu_non_zero, cov_non_zero, size=self.n).T
+        # Create an output array filled with zeros of the original shape
+        output_samples = np.zeros((len(self.mu), self.n))
+        # Insert the non-zero samples back into the correct positions
+        output_samples[non_zero_indices] = samples_non_zero
+        return output_samples
+
+    def draw_uniform_sample(self, n_std=3):
+        std_full = np.sqrt(np.diag(self.cov))  # shape (p,)
+        low = self.mu - n_std * std_full
+        high = self.mu + n_std * std_full
+        sample = self.rng.uniform(low=low, high=high, size=(self.n, len(low))).T
+        return sample
+
+    def plot_samples(self, sample):
+        k = self.p // self.t
+        fig, axes = plt.subplots(k, 1, figsize=(10, 6))
+        for i in range(k):
+            axes[i].plot(sample[self.t * i: self.t * (i + 1), :], 'C0', alpha=0.3)
+            axes[i].plot(self.mu[self.t * i: self.t * (i + 1)], 'k')
+            axes[i].grid(True)
 # ------------------------- Example usage (for reference) -------------------------
 # df must be an hourly DataFrame with a DatetimeIndex and columns:
 # ["consumer1_demand", ..., "consumerN_demand", "electricity_price"]
