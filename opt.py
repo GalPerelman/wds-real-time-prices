@@ -401,7 +401,7 @@ class RO(BaseOptModel):
             constraints.append(self.a[i, :] @ x_augmented + self.omega * tau[i] <= 0.0)
 
         prob = cp.Problem(cp.Minimize(self.y), constraints)
-        prob.solve(solver=cp.MOSEK)
+        prob.solve(solver=cp.GUROBI)
         print("Status:", prob.status)
         print("Optimal value", prob.value)
         if prob.status == "optimal":
@@ -628,7 +628,7 @@ class SP(BaseOptModel):
         constraints = [a[:m * 2, :] @ self.x <= b_safe, a[m * 2:, :] @ self.x <= b[m * 2:]]
 
         prob = cp.Problem(cp.Minimize(obj), constraints)
-        prob.solve(solver=cp.ECOS)
+        prob.solve(solver=cp.GUROBI)
         print("Status:", prob.status)
         print("Optimal value", prob.value)
         self.extract_solution()
