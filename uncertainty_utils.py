@@ -293,7 +293,6 @@ class SpatioTemporalEllipsoidUncertaintyEstimator:
         return self.variables_.index(var) * H + hour
 
     # ------------------------- Internal helpers -------------------------
-
     def _pick_muSigma(self, use_residuals: bool) -> Tuple[np.ndarray, np.ndarray]:
         self._require_fit()
         if use_residuals:
@@ -375,34 +374,3 @@ class Sampler:
             axes[i].plot(sample[self.t * i: self.t * (i + 1), :], 'C0', alpha=0.3)
             axes[i].plot(self.mu[self.t * i: self.t * (i + 1)], 'k')
             axes[i].grid(True)
-# ------------------------- Example usage (for reference) -------------------------
-# df must be an hourly DataFrame with a DatetimeIndex and columns:
-# ["consumer1_demand", ..., "consumerN_demand", "electricity_price"]
-
-# df = pd.read_csv("data/Labs_IDC_Hourly_20250812_150341.csv", index_col=0, parse_dates=True,
-#                  usecols=['Delivery Date', 'Best bid'])
-# df = pd.read_csv("data/InflowData_1.csv", index_col=0, parse_dates=True)
-# df.index = pd.to_datetime(df.index, dayfirst=True)
-# print(df)
-# est = SpatioTemporalUncertaintyEstimator(
-#     seasonal_demean=True,             # remove hour-of-day baseline
-#     drop_incomplete_windows=True      # require full 24h days
-# )
-# est.fit(df)
-# #
-# # # Ellipsoid on residuals (recommended if you want fluctuations around daily patterns)
-# U = est.get_uncertainty_set(use_residuals=True)
-# mu, Sigma = U.mu, U.Sigma
-#
-# plt.imshow(Sigma, cmap='viridis')
-# plt.show()
-
-# # If you prefer raw statistics without demeaning:
-# U_raw = est.get_uncertainty_set(use_residuals=False)
-#
-# # See the hour-of-day baseline (variables x hours):
-# baseline = est.baseline_matrix()
-#
-# # Interpret positions in the stacked vector:
-# var, hour = est.index_to_var_hour(37)
-# idx = est.var_hour_to_index("electricity_price", 15)
