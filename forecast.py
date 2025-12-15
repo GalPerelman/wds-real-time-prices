@@ -21,7 +21,7 @@ class Forecast:
 
     def preprocess(self):
         self.data_completion()
-        self.construct_datetime_features()
+        self.data = self.construct_datetime_features(self.data)
         self.lag_features(cols_to_lag={**{col: 6 for col in self.demand_cols}, **{self.prices_col: 5}})
         self.data.dropna()
 
@@ -31,26 +31,29 @@ class Forecast:
         data_imputed = pd.DataFrame(data_imputed, columns=self.data.columns, index=self.data.index)
         self.data = data_imputed
 
-    def construct_datetime_features(self):
+    @staticmethod
+    def construct_datetime_features(data):
         """
         Function to add categories based on the datetime index: Month, weekday, hour, special dates
+        This function is written as a static method to allow preprocess the test data during mpc
         """
-        self.data['hour_sin'] = np.sin(self.data.index.hour * (2. * np.pi / 24))
-        self.data['hour_cos'] = np.cos(self.data.index.hour * (2. * np.pi / 24))
-        self.data['day_sin'] = np.sin(self.data.index.day * (2. * np.pi / 31))  # Assuming max 31 days in a month
-        self.data['day_cos'] = np.cos(self.data.index.day * (2. * np.pi / 31))
-        self.data['weekday_sin'] = np.sin(self.data.index.weekday * (2. * np.pi / 7))
-        self.data['weekday_cos'] = np.cos(self.data.index.weekday * (2. * np.pi / 7))
-        self.data['month_sin'] = np.sin(self.data.index.month * (2. * np.pi / 12))
-        self.data['month_cos'] = np.cos(self.data.index.month * (2. * np.pi / 12))
-        self.data['weeknum_sin'] = np.sin((self.data.index.strftime('%U').astype(int) + 1) * (2. * np.pi / 52))
-        self.data['weeknum_cos'] = np.cos((self.data.index.strftime('%U').astype(int) + 1) * (2. * np.pi / 52))
+        data['hour_sin'] = np.sin(data.index.hour * (2. * np.pi / 24))
+        data['hour_cos'] = np.cos(data.index.hour * (2. * np.pi / 24))
+        data['day_sin'] = np.sin(data.index.day * (2. * np.pi / 31))  # Assuming max 31 days in a month
+        data['day_cos'] = np.cos(data.index.day * (2. * np.pi / 31))
+        data['weekday_sin'] = np.sin(data.index.weekday * (2. * np.pi / 7))
+        data['weekday_cos'] = np.cos(data.index.weekday * (2. * np.pi / 7))
+        data['month_sin'] = np.sin(data.index.month * (2. * np.pi / 12))
+        data['month_cos'] = np.cos(data.index.month * (2. * np.pi / 12))
+        data['weeknum_sin'] = np.sin((data.index.strftime('%U').astype(int) + 1) * (2. * np.pi / 52))
+        data['weeknum_cos'] = np.cos((data.index.strftime('%U').astype(int) + 1) * (2. * np.pi / 52))
 
         def is_dst(dt):
             return dt.dst() != pd.Timedelta(0)
 
-        self.data['is_dst'] = self.data.index.map(is_dst).astype(int)
-        self.data['is_special'] = self.data.index.normalize().isin(SpecialDates.dates).astype(int)
+        data['is_dst'] = data.index.map(is_dst).astype(int)
+        data['is_special'] = data.index.normalize().isin(SpecialDates.dates).astype(int)
+        return data
 
     def lag_features(self, cols_to_lag: dict):
         lagged_cols = []
