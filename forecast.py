@@ -25,7 +25,7 @@ class Forecast:
     def preprocess(self):
         self.data_completion()
         self.data = self.construct_datetime_features(self.data)
-        self.lag_features(cols_to_lag={**{col: 6 for col in self.demand_cols}, **{self.prices_col: 5}})
+        # self.lag_features(cols_to_lag={**{col: 6 for col in self.demand_cols}, **{self.prices_col: 5}})
         self.data.dropna()
 
     def data_completion(self):
