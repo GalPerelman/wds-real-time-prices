@@ -20,6 +20,7 @@ class MPC:
         self.current_time = self.start_datetime  # timestamp of the first step
 
         self.forecaster = self.prepare_forecaster()
+        self.last_forecast = self.predict_next_horizon()
 
     def prepare_forecaster(self):
         f = forecast.Forecast(db=self.db, prices_col="tariff", demand_cols=['a', 'b', 'c'])
@@ -39,11 +40,16 @@ class MPC:
         next_horizon_data = forecast.Forecast.construct_datetime_features(next_horizon)
         return next_horizon_data
 
+    def predict_next_horizon(self):
+        next_horizon_x = self.preprocess_next_horizon()
+        demand_forecast = self.forecaster.predict(x=next_horizon_x, target="demand")
+        price_forecast = self.forecaster.predict(x=next_horizon_x, target="price")
+        forecast = pd.DataFrame(index=next_horizon_x.index, data=np.hstack([price_forecast, demand_forecast]),
+                                columns=[self.forecaster.prices_col] + self.forecaster.demand_cols)
+        return forecast
+
     def run(self):
         for t in range(self.experiment_horizon):
-            next_horizon_x = self.preprocess_next_horizon()
-            demand_forecast = self.forecaster.predict(x=next_horizon_x, target="demand")
-            print(demand_forecast)
 
             self.t_idx += 1
             self.current_time = self.current_time + datetime.timedelta(hours=self.step_horizon)
