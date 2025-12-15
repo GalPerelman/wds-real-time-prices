@@ -3,24 +3,54 @@ import datetime
 import pandas as pd
 import numpy as np
 
+from opt import BaseOptModel, RO, SP
+from network import LPNetwork
 import forecast
 
 
 class MPC:
-    def __init__(self, opt_model, db, start_datetime, step_horizon, wait, experiment_horizon, forecast_method="xgb"):
-        self.opt_model = opt_model
+    def __init__(self, net_path, opt_method, db, start_datetime, step_horizon, wait, experiment_horizon,
+                 forecast_method="xgb", milp=True, **kwargs):
+        self.net_path = net_path
+        self.opt_method = opt_method
         self.db = db
-        self.start_datetime = datetime.datetime(start_datetime)
+        self.start_datetime = start_datetime
         self.step_horizon = step_horizon
         self.wait = wait
         self.experiment_horizon = experiment_horizon
         self.forecast_method = forecast_method
+        self.milp = milp
+
+        # different parameters for different optimization methods
+        self.omega = kwargs.get("omega", 1)  # for RO with Ellipsoidal Uncertainty
+        self.gamma = kwargs.get("gamma", (2, 5))  # for RO with Budget of Uncertainty
+        self.epsilon = kwargs.get("epsilon", 0.05)  # for SP with Chance Constraints
+        self.alpha = kwargs.get("alpha", 1.0)  # for SP - CC relaxation over time parameter
 
         self.t_idx = 0  # counter of time steps from start
         self.current_time = self.start_datetime  # timestamp of the first step
 
         self.forecaster = self.prepare_forecaster()
         self.last_forecast = self.predict_next_horizon()
+
+        self.net = None
+        self.opt_model = None
+
+    def init_opt_model(self):
+        self.net = LPNetwork(self.net_path)
+        if self.opt_method in ["lp", "pto"]:
+            model = BaseOptModel(network=self.net, t=self.step_horizon, forecast=self.last_forecast,
+                                 database=self.db.data, milp=self.milp)
+        elif self.opt_method in ["ro", "RO"]:
+            model = RO(network=self.net, t=self.step_horizon, omega=self.omega, gamma=self.gamma,
+                       forecast=self.last_forecast, database=self.db.data, milp=self.milp)
+        elif self.opt_method in ["sp", "SP", "CC", "SAA"]:
+            model = SP(network=self.net, t=self.step_horizon, epsilon=self.epsilon, alpha=self.alpha,
+                       forecast=self.last_forecast, database=self.db.data, milp=self.milp)
+        else:
+            raise ValueError(f"Unknown optimization method: {self.opt_method}")
+
+        self.opt_model = model
 
     def prepare_forecaster(self):
         f = forecast.Forecast(db=self.db, prices_col="tariff", demand_cols=['a', 'b', 'c'])
