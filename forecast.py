@@ -17,7 +17,7 @@ class Forecast:
         self.demand_cols = demand_cols
         self.data = deepcopy(self.db.data)
 
-        self.models = {"xgb": xgb.XGBRegressor, "lgb": lgb.LGBMRegressor, "rf": RandomForestRegressor}
+        self.models = {"xgb": xgb.XGBRegressor, "rf": RandomForestRegressor}
 
     def preprocess(self):
         self.data_completion()
