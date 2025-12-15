@@ -19,6 +19,9 @@ class Forecast:
 
         self.models = {"xgb": xgb.XGBRegressor, "rf": RandomForestRegressor}
 
+        self.price_model = None
+        self.demand_model = None
+
     def preprocess(self):
         self.data_completion()
         self.data = self.construct_datetime_features(self.data)
@@ -64,19 +67,33 @@ class Forecast:
 
         return lagged_cols
 
-    def data_split(self, target_col):
+    def data_split(self, target_cols):
         x = self.data.drop([self.prices_col] + self.demand_cols, axis=1)
-        y = self.data[[target_col]]
+        y = self.data[target_cols]
         return x, y
 
-    def fit(self, model_name, target_col):
-        reg = self.models[model_name]()
-        x, y = self.data_split(target_col)
-        reg.fit(x, y)
-        return reg
+    def fit(self, model_name, target):
+        if target == "demand":
+            reg = self.models[model_name]()
+            x, y = self.data_split(self.demand_cols)
+            reg.fit(x, y)
+            self.demand_model = reg
+        if target == "price":
+            reg = self.models[model_name]()
+            x, y = self.data_split([self.prices_col])
+            reg.fit(x, y)
+            self.price_model = reg
 
-    def predict(self, reg, x):
-        return reg.predict(x)
+    def predict(self, x, target):
+        if target == "demand":
+            pred = self.demand_model.predict(x)
+        if target == "price":
+            pred = self.price_model.predict(x)
+
+        if pred.ndim == 1:
+            pred = pred.reshape(-1, 1)
+
+        return pred
 
 
 class SpecialDates:
