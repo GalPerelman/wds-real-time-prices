@@ -22,10 +22,13 @@ class MPC:
         self.milp = milp
 
         # different parameters for different optimization methods
+        self.u_set = kwargs.get("uncertainty_set", "ellipsoid")
         self.omega = kwargs.get("omega", 1)  # for RO with Ellipsoidal Uncertainty
         self.gamma = kwargs.get("gamma", (2, 5))  # for RO with Budget of Uncertainty
+        self.k = kwargs.get("k", 1.5)  # for RO with Budget of Uncertainty
         self.epsilon = kwargs.get("epsilon", 0.05)  # for SP with Chance Constraints
         self.alpha = kwargs.get("alpha", 1.0)  # for SP - CC relaxation over time parameter
+        self.u_set = kwargs.get("uncertainty_set", "ellipsoid")  # for RO
 
         self.t_idx = 0  # counter of time steps from start
         self.current_time = self.start_datetime  # timestamp of the first step

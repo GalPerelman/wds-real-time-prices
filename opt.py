@@ -282,7 +282,6 @@ class RO(BaseOptModel):
     """
     Uncertainty set
     ================
-
     Starting from a cov matrix - Sigma
     We derive a matrix delta such that Sigma = delta @ delta.T
     Now we need to construct a mapping matrix that governs which rows of delta are active per each constraint
@@ -291,10 +290,13 @@ class RO(BaseOptModel):
     The cov matrix dimensions are: n_time_steps (electricity prices) + n_time_steps * n_tanks (demands)
     The mapping should be such that first n_time_steps rows are for electricity prices
     """
-    def __init__(self, network, t, omega=None, gamma=None, **kwargs):
+
+    def __init__(self, network, t, uncertainty_set, omega=None, gamma=None, k=1.5, **kwargs):
         super().__init__(network, t, **kwargs)
+        self.uncertainty_set = uncertainty_set
         self.omega = omega
         self.gamma = gamma
+        self.k = k
 
         self.a = np.asarray(self.preprocess().astype(np.float64))
 
@@ -421,7 +423,7 @@ class RO(BaseOptModel):
         rho = k * std_full  # shape (p,)
         return rho
 
-    def formulate_bou_rc(self, k=1):
+    def formulate_bou_rc(self):
         """
         Budget of Uncertainty robust counterpart using dual π, θ formulation (Bertsimas–Sim)
         on the epigraph system:
@@ -441,6 +443,7 @@ class RO(BaseOptModel):
 
         mapping_mats = self.get_mapping_matrix()          # list of length m, each (n, p)
         rho = self.get_bou_deviations(k)                  # shape (p,)
+        rho = self.get_bou_deviations(self.k)       # shape (p,)
 
         # Decision variables
         self.y = cp.Variable(nonneg=True)                           # epigraph scalar
