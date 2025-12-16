@@ -17,7 +17,7 @@ class BaseOptModel:
     def __init__(self, network, t, forecast, database, solver_params=None, solver_display=False, milp=True, **kwargs):
         self.network = network
         self.t = t
-        self.forecast = forecast
+        self.forecast = forecast  # should be a pandas dataframe, first column prices, rest demands
         self.database = database
         self.solver_params = solver_params
         self.solver_display = solver_display
@@ -46,7 +46,7 @@ class BaseOptModel:
         # Ellipsoid uncertainty set
         self.mu = None
         self.sigma = None
-        
+
         # Optimization placeholders
         self.formulation_start = None
         self.x = None
@@ -75,7 +75,7 @@ class BaseOptModel:
                 start_idx = i * (self.n_fsp + self.n_vsp)
                 end_idx = start_idx + self.n_fsp
                 for _ in range(start_idx, end_idx):
-                    bool_vector = bool_vector + (_, )
+                    bool_vector = bool_vector + (_,)
 
             bool_vector = (np.array(bool_vector, dtype=int),)
             return bool_vector
@@ -309,7 +309,6 @@ class RO(BaseOptModel):
         self.m = int(self.a.shape[0])
         self.p = int(self.sigma.shape[0])
 
-
     def preprocess(self):
         a, b, c = self.construct_nominal_matrix()
         a = np.asarray(a.astype(np.float64))
@@ -436,28 +435,27 @@ class RO(BaseOptModel):
           through the cumulative-demand mapping in get_mapping_matrix().
 
         k             : scales std -> ρ_j = k * std_j
-        gamma         : a tuple containg the budget of uncertainty as (gamma_obj, gamma_constraints)
+        gamma         : a tuple contain the budget of uncertainty as (gamma_obj, gamma_constraints)
                         allowing tho set different budgets for each uncertainty.
                         this is required to avoid extreme costs in the robust solutions
         """
 
-        mapping_mats = self.get_mapping_matrix()          # list of length m, each (n, p)
-        rho = self.get_bou_deviations(k)                  # shape (p,)
+        mapping_mats = self.get_mapping_matrix()    # list of length m, each (n, p)
         rho = self.get_bou_deviations(self.k)       # shape (p,)
 
         # Decision variables
-        self.y = cp.Variable(nonneg=True)                           # epigraph scalar
+        self.y = cp.Variable(nonneg=True)  # epigraph scalar
         self.x = cp.Variable(self.n - 2, nonneg=True, boolean=self.get_bool_vector())  # original decision vector
-        x_aug = cp.hstack([self.y, self.x, 1.0])                    # [y; x; 1]
+        x_aug = cp.hstack([self.y, self.x, 1.0])  # [y; x; 1]
 
         # Bertsimas–Sim aux variables
-        pi = cp.Variable(self.m, nonneg=True)                               # π_i per row
-        theta = [cp.Variable(self.p, nonneg=True) for _ in range(self.m)]   # θ_i (vector) per row
+        pi = cp.Variable(self.m, nonneg=True)  # pi_i per row
+        theta = [cp.Variable(self.p, nonneg=True) for _ in range(self.m)]  # theta_i (vector) per row
 
         constraints = []
 
         # Number of mass-balance constraints (upper only)
-        m_mb = self.t * self.n_tanks    # upper
+        m_mb = self.t * self.n_tanks
 
         # row 0          : objective
         # rows 1..m_mb   : tank upper bounds
@@ -466,15 +464,15 @@ class RO(BaseOptModel):
         power, tariff = self.objective()  # we need to multiply the pumps power by the uncertain part of the prices
         gamma_obj, gamma = self.gamma
         for i in range(self.m):
-            a_i = self.a[i, :]                 # 1 x n
-            mapping_i = mapping_mats[i]        # n x p
+            a_i = self.a[i, :]  # 1 x n
+            mapping_i = mapping_mats[i]  # n x p
 
-            # fapplying the power on the uncertain tariffs
+            # applying the power on the uncertain tariffs
             mapping_i[1: -1, :] *= power
 
             # Effect of each primitive uncertainty j on row i
-            effect = mapping_i.T @ x_aug       # shape (p,)
-            s_i = cp.multiply(rho, effect)     # q_expr_j = ρ_j * effect_j >= 0
+            effect = mapping_i.T @ x_aug  # shape (p,)
+            s_i = cp.multiply(rho, effect)  # q_expr_j = rho_j * effect_j >= 0
 
             # Choose Gamma for this row
             if i == 0:
@@ -487,10 +485,10 @@ class RO(BaseOptModel):
                 # other constraints: no BS uncertainty
                 g = 0.0
 
-            # Robust constraint: a_i^T x_aug + Γ_i * π_i + sum_j θ_ij <= 0
+            # Robust constraint: a_i^T x_aug + Gamma_i * pi_i + sum_j theta_ij <= 0
             constraints.append(a_i @ x_aug + g * pi[i] + cp.sum(theta[i]) <= 0)
 
-            # Linking constraints: θ_ij >= s_i[j] - π_i
+            # Linking constraints: theta_ij >= s_i[j] - pi_i
             constraints.append(theta[i] >= s_i - pi[i])
 
         self.problem = cp.Problem(cp.Minimize(self.y), constraints)
@@ -667,12 +665,6 @@ class Simulation:
         self.mu = self.opt_model.get_nominal()
         self.cov = self.opt_model.sigma
         self.sampler = uncertainty_utils.Sampler(mu=self.mu, cov=self.cov, p=self.p, t=self.t, n=self.n)
-
-        self.sample = self.sampler.draw_sample("normal")
-        self.sampler.plot_samples(self.sample)
-        self.sample = self.sampler.draw_sample("uniform")
-        self.sampler.plot_samples(self.sample)
-
         self.sample = self.sampler.draw_sample(sampling_method=self.sampling_method)
 
         self.calculate_tank_volumes()
