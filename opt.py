@@ -224,12 +224,14 @@ class BaseOptModel:
     def formulate(self):
         a, b, c = self.construct_nominal_matrix()
         self.x = cp.Variable(self.n_var * self.t, boolean=False)  # self.get_bool_vector())
-        prob = cp.Problem(cp.Minimize(c @ self.x), [a @ self.x <= b])
-        prob.solve(solver=cp.GUROBI)
-        if prob.status == "optimal":
+        self.problem = cp.Problem(cp.Minimize(c @ self.x), [a @ self.x <= b])
+
+    def solve(self):
+        self.problem.solve(solver=cp.GUROBI)
+        if self.problem.status == "optimal":
             self.extract_solution()
-        print("Status:", prob.status)
-        print("Optimal value", prob.value)
+        print("Status:", self.problem.status)
+        print("Optimal value", self.problem.value)
 
     def extract_solution(self):
         self.x_fsp_value = self.x.value.reshape(self.t, self.n_fsp + self.n_vsp)[:, :self.n_fsp]
@@ -400,13 +402,7 @@ class RO(BaseOptModel):
             # Linear_i: A_full[i] @ x_aug + omega * t[i] <= 0
             constraints.append(self.a[i, :] @ x_augmented + self.omega * tau[i] <= 0.0)
 
-        prob = cp.Problem(cp.Minimize(self.y), constraints)
-        prob.solve(solver=cp.GUROBI)
-        print("Status:", prob.status)
-        print("Optimal value", prob.value)
-        if prob.status == "optimal":
-            self.extract_solution()
-        return prob.status, prob.value
+        self.problem = cp.Problem(cp.Minimize(self.y), constraints)
 
     def get_bou_deviations(self, k: float) -> np.ndarray:
         """
@@ -494,16 +490,26 @@ class RO(BaseOptModel):
             # Linking constraints: θ_ij >= s_i[j] - π_i
             constraints.append(theta[i] >= s_i - pi[i])
 
-        prob = cp.Problem(cp.Minimize(self.y), constraints)
-        prob.solve(solver=cp.GUROBI,
-                   verbose=self.solver_display,
-                   )
+        self.problem = cp.Problem(cp.Minimize(self.y), constraints)
 
-        print("Status:", prob.status)
-        print("Optimal value", prob.value)
-        if prob.status == "optimal":
+    def formulate(self):
+        if self.uncertainty_set.lower() == "ellipsoid":
+            self.formulate_ellipsoid_rc()
+        elif self.uncertainty_set.lower() == "bou":
+            self.formulate_bou_rc()
+        else:
+            raise ValueError(f"Unknown uncertainty set type: {self.uncertainty_set}")
+
+    def solve(self):
+        self.problem.solve(solver=cp.GUROBI,
+                           verbose=self.solver_display,
+                           )
+
+        print("Status:", self.problem.status)
+        print("Optimal value", self.problem.value)
+        if self.problem.status == "optimal":
             self.extract_solution()
-        return prob.status, prob.value
+        return self.problem.status, self.problem.value
 
 
 class SP(BaseOptModel):
@@ -627,13 +633,15 @@ class SP(BaseOptModel):
         b_safe = b[:m * 2] - z * sigma_rhs  # shape (2m,)
         constraints = [a[:m * 2, :] @ self.x <= b_safe, a[m * 2:, :] @ self.x <= b[m * 2:]]
 
-        prob = cp.Problem(cp.Minimize(obj), constraints)
-        prob.solve(solver=cp.GUROBI)
-        print("Status:", prob.status)
-        print("Optimal value", prob.value)
-        self.extract_solution()
-        return prob.status, prob.value
+        self.problem = cp.Problem(cp.Minimize(obj), constraints)
 
+    def solve(self):
+        self.problem.solve(solver=cp.GUROBI)
+        print("Status:", self.problem.status)
+        print("Optimal value", self.problem.value)
+        if self.problem.status == "optimal":
+            self.extract_solution()
+        return self.problem.status, self.problem.value
 
 
 
