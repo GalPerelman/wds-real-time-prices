@@ -660,7 +660,8 @@ class Simulation:
         self.rng = np.random.default_rng(seed=42)
 
         self.tank_volumes = {}
-        self.violations = pd.DataFrame()
+        self.is_violations = pd.DataFrame()
+        self.violation_volume = pd.DataFrame()
         self.costs = pd.Series()
 
         self.mu = self.opt_model.get_nominal()
@@ -692,8 +693,13 @@ class Simulation:
             tank_lb = np.tile(tank_data['min_vol'], self.t)
             tank_lb[-1] = tank_data['final_vol']
             tank_lb, tank_ub = tank_lb, tank_ub
-            tank_violations = np.logical_or(np.any(vol.T - tank_lb < 0, axis=1), np.any(tank_ub - vol.T < 0, axis=1))
-            self.violations[tank_name] = tank_violations
+            tank_is_violation = np.logical_or(np.any(vol.T - tank_lb < 0, axis=1), np.any(tank_ub - vol.T < 0, axis=1))
+
+            violated_vol = (np.sum(np.maximum(0, tank_lb.reshape(-1, 1) - vol), axis=1)
+                            + np.sum(np.maximum(0, vol - tank_ub.reshape(-1, 1)), axis=1))
+
+            self.is_violations[tank_name] = tank_is_violation
+            self.violation_volume[tank_name] = violated_vol
 
     def calculate_cost(self):
         power_blocks = np.concatenate([
@@ -720,7 +726,8 @@ class Simulation:
         c_samples = c_blocks.reshape(self.t * (self.opt_model.n_fsp + self.opt_model.n_vsp), self.n)
         costs = c_samples.T @ self.opt_model.x_value
         self.costs = pd.Series(costs)
+
     def summarize(self):
-        violations_rate = self.violations.any(axis=1).sum() / self.n
-        print(f"Violations rate: {violations_rate:.2%}")
+        violations_rate = self.is_violations.any(axis=1).sum() / self.n
+        print(f"Violations rate: {violations_rate:.2%} | Violated volume: {self.violation_volume.sum().sum():.2f}")
         return violations_rate
