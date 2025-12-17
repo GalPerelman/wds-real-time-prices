@@ -228,10 +228,11 @@ class BaseOptModel:
 
     def solve(self):
         self.problem.solve(solver=cp.GUROBI)
-        if self.problem.status == "optimal":
-            self.extract_solution()
         print("Status:", self.problem.status)
         print("Optimal value", self.problem.value)
+        if self.problem.status == "optimal":
+            self.extract_solution()
+        return self.problem.status, self.problem.value
 
     def extract_solution(self):
         self.x_fsp_value = self.x.value.reshape(self.t, self.n_fsp + self.n_vsp)[:, :self.n_fsp]
