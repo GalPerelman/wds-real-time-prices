@@ -223,7 +223,7 @@ class BaseOptModel:
 
     def formulate(self):
         a, b, c = self.construct_nominal_matrix()
-        self.x = cp.Variable(self.n_var * self.t, boolean=False)  # self.get_bool_vector())
+        self.x = cp.Variable(self.n_var * self.t, boolean=self.get_bool_vector())
         self.problem = cp.Problem(cp.Minimize(c @ self.x), [a @ self.x <= b])
 
     def solve(self):
