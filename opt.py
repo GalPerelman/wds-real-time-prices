@@ -59,7 +59,7 @@ class BaseOptModel:
         self.apply_forecast()
 
     def apply_forecast(self):
-        self.network.demands = self.forecast.iloc[:, 1:].copy()
+        self.network.demands = self.forecast.iloc[:, 1: self.network.n_tanks + 1].copy()
         self.network.tariffs = self.forecast.iloc[:, :1].copy()
 
     def get_bool_vector(self):
