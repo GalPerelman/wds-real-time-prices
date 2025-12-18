@@ -35,17 +35,12 @@ class BaseOptModel:
         # the mass balance mat is saved as a property to support tank simulations
         self.tanks_balance_mat = None
 
-        # Set the nominal electricity prices and demands for the current solution
-        self.apply_forecast()
-
-        # build the nominal problem
-        self.build_mass_balance()
-        self.one_comb_only()
-
         # For uncertain models
         # Ellipsoid uncertainty set
         self.mu = None
         self.sigma = None
+        self.delta = None
+        self.p = None  # dimension of uncertainty set
 
         # Optimization placeholders
         self.formulation_start = None
@@ -59,6 +54,9 @@ class BaseOptModel:
         self.x_fsp_value = None
         self.x_vsp_value = None
         self.x_value = None
+
+        # Set the nominal electricity prices and demands for the current solution
+        self.apply_forecast()
 
     def apply_forecast(self):
         self.network.demands = self.forecast.iloc[:, 1:].copy()
@@ -79,6 +77,11 @@ class BaseOptModel:
 
             bool_vector = (np.array(bool_vector, dtype=int),)
             return bool_vector
+
+    def build_problem(self):
+        # build the nominal problem
+        self.build_mass_balance()
+        self.one_comb_only()
 
     def build_mass_balance(self):
         """
@@ -196,7 +199,6 @@ class BaseOptModel:
         power_blocks = np.tile(np.hstack([self.network.fsp['power'].values.reshape(1, -1),
                                           np.zeros((1, self.n_vsp))]), self.t)
         power = power_blocks.ravel()
-
         tariff_blocks = np.array([np.r_[np.repeat(val, self.n_fsp), np.zeros(self.n_vsp)]
                                   for val in self.network.tariffs['tariff'].values[:self.t]])
 
@@ -221,7 +223,8 @@ class BaseOptModel:
         c = (tariff * power)
         return a, b, c
 
-    def formulate(self):
+    def formulate(self, **kwargs):
+        self.build_problem()  # build again with every formulation call - ensure updated prices and demands
         a, b, c = self.construct_nominal_matrix()
         self.x = cp.Variable(self.n_var * self.t, boolean=self.get_bool_vector())
         self.problem = cp.Problem(cp.Minimize(c @ self.x), [a @ self.x <= b])
@@ -259,7 +262,7 @@ class BaseOptModel:
         elec_demand_data.index = pd.to_datetime(elec_demand_data.index, dayfirst=True)
         return elec_demand_data
 
-    def get_ellipsoid_uncertainty_set(self, database, plot=False):
+    def get_ellipsoid_uncertainty_set(self, database, start_hour, plot=False):
         """
         Can be used for RO but also for sampling-based methods where we need mu and Sigma
         """
@@ -269,8 +272,10 @@ class BaseOptModel:
             drop_incomplete_windows=True  # require full 24h days
         )
         est.fit(database)
-        u = est.get_uncertainty_set(horizon=self.t, start_hour=0, use_residuals=False)
+        u = est.get_uncertainty_set(horizon=self.t, start_hour=start_hour, use_residuals=False)
         self.mu, self.sigma = u.mu, u.Sigma
+        self.delta = np.asarray(np.linalg.cholesky(self.sigma).astype(np.float64))
+        self.p = int(self.sigma.shape[0])
 
         if plot:
             plt.imshow(sigma[:self.t, :self.t], cmap='viridis')
@@ -299,16 +304,11 @@ class RO(BaseOptModel):
         self.gamma = gamma
         self.k = k
 
-        self.a = np.asarray(self.preprocess().astype(np.float64))
-
-        self.get_ellipsoid_uncertainty_set(self.database)
-        self.delta = np.linalg.cholesky(self.sigma)
-        self.delta = np.asarray(self.delta.astype(np.float64))
+        self.a = None
+        self.n = None
+        self.m = None
 
         self.T = int(self.t)
-        self.n = int(self.a.shape[1])
-        self.m = int(self.a.shape[0])
-        self.p = int(self.sigma.shape[0])
 
     def preprocess(self):
         a, b, c = self.construct_nominal_matrix()
@@ -317,7 +317,10 @@ class RO(BaseOptModel):
         c = np.asarray(c.astype(np.float64))
         epigraph_obj = np.hstack([[-1.0], c, [0.0]])
         constraints = np.hstack([np.zeros((a.shape[0], 1)), a, -1 * b.reshape(-1, 1)])
-        return np.vstack([epigraph_obj, constraints])
+
+        self.a = np.asarray(np.vstack([epigraph_obj, constraints]).astype(np.float64))
+        self.n = int(self.a.shape[1])
+        self.m = int(self.a.shape[0])
 
     def get_mapping_matrix(self):
         """
@@ -380,7 +383,15 @@ class RO(BaseOptModel):
 
         return matrices
 
-    def formulate_ellipsoid_rc(self):
+    def formulate_ellipsoid_rc(self, start_hour=None):
+        # build again with every formulation call - ensure updated prices and demands
+        self.build_problem()
+        self.preprocess()
+        # generate the uncertainty set with every formulation call - ensure mu and cov are consistent with start hour
+        if start_hour is None:
+            start_hour = self.forecast.index[0].hour
+        self.get_ellipsoid_uncertainty_set(database=self.database, start_hour=start_hour, plot=False)
+
         mapping_mats = self.get_mapping_matrix()
         # Precompute multiplication of mapping matrices with delta
         constraints_mapping_matrices = [mat @ self.delta for mat in mapping_mats]
@@ -423,7 +434,7 @@ class RO(BaseOptModel):
         rho = k * std_full  # shape (p,)
         return rho
 
-    def formulate_bou_rc(self):
+    def formulate_bou_rc(self, start_hour=None):
         """
         Budget of Uncertainty robust counterpart using dual π, θ formulation (Bertsimas–Sim)
         on the epigraph system:
@@ -440,6 +451,13 @@ class RO(BaseOptModel):
                         allowing tho set different budgets for each uncertainty.
                         this is required to avoid extreme costs in the robust solutions
         """
+        # build again with every formulation call - ensure updated prices and demands
+        self.build_problem()
+        self.preprocess()
+        # generate the uncertainty set with every formulation call - ensure mu and cov are consistent with start hour
+        if start_hour is None:
+            start_hour = self.forecast.index[0].hour
+        self.get_ellipsoid_uncertainty_set(database=self.database, start_hour=start_hour, plot=False)
 
         mapping_mats = self.get_mapping_matrix()    # list of length m, each (n, p)
         rho = self.get_bou_deviations(self.k)       # shape (p,)
@@ -494,11 +512,11 @@ class RO(BaseOptModel):
 
         self.problem = cp.Problem(cp.Minimize(self.y), constraints)
 
-    def formulate(self):
+    def formulate(self, start_hour=None):
         if self.uncertainty_set.lower() == "ellipsoid":
-            self.formulate_ellipsoid_rc()
+            self.formulate_ellipsoid_rc(start_hour=start_hour)
         elif self.uncertainty_set.lower() == "bou":
-            self.formulate_bou_rc()
+            self.formulate_bou_rc(start_hour=start_hour)
         else:
             raise ValueError(f"Unknown uncertainty set type: {self.uncertainty_set}")
 
@@ -525,8 +543,14 @@ class SP(BaseOptModel):
         self.n = n  # number of samples
         self.sampling_method = sampling_method
 
-        self.get_ellipsoid_uncertainty_set(self.database)
+        self.sampler = None
+        self.sample = None
 
+    def update_sampler(self):
+        """
+        we update the sampler object with every formulation call
+        this is done to ensure the that mu and sigma are according to the start time
+        """
         self.sampler = uncertainty_utils.Sampler(self.mu, self.sigma, p=self.sigma.shape[0], t=self.t, n=self.n)
         # sample shape = (p, n) where p is uncertainty dimension - p = n_tanks + 1
         self.sample = self.sampler.draw_sample(sampling_method=self.sampling_method)
@@ -575,7 +599,15 @@ class SP(BaseOptModel):
 
         return c_quantile
 
-    def formulate(self):
+    def formulate(self, start_hour=None):
+        self.build_problem()
+        if start_hour is None:
+            start_hour = self.forecast.index[0].hour
+        self.get_ellipsoid_uncertainty_set(database=self.database, start_hour=start_hour, plot=False)
+
+        # update the sampler with every formulation call - ensure consistency with start hour
+        self.update_sampler()
+
         a, b, c_nominal = self.construct_nominal_matrix()
         self.x = cp.Variable(self.n_var * self.t, boolean=self.get_bool_vector())
 

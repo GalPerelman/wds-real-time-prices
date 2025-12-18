@@ -89,8 +89,8 @@ class MPC:
             self.predict_next_horizon()
             self.opt_model.forecast = self.last_forecast
             self.opt_model.apply_forecast()
-            self.opt_model.formulate()
-            self.opt_model.solve()
+            self.opt_model.formulate(start_hour=self.current_time.hour)
+            status, cost = self.opt_model.solve()
 
             step_end = self.current_time + datetime.timedelta(hours=self.wait - 1)
             realization = self.realizations.loc[self.current_time: step_end]
