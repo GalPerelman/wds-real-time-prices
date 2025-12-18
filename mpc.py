@@ -1,5 +1,6 @@
 import datetime
 
+import matplotlib.pyplot as plt
 import pandas as pd
 import numpy as np
 
@@ -94,6 +95,7 @@ class MPC:
 
             step_end = self.current_time + datetime.timedelta(hours=self.wait - 1)
             realization = self.realizations.loc[self.current_time: step_end]
+            step_tank_volumes = {}
             for i, (tank_id, tank_data) in enumerate(self.net.tanks.iterrows()):
                 vol = self.net.get_tank_vol(t=self.wait, tank_id=tank_id,
                                             x_fsp=self.opt_model.x_fsp_value[:self.wait, :],
@@ -101,18 +103,55 @@ class MPC:
                                             sample=realization.iloc[:self.wait, 1 + i].values)
 
                 self.net.tanks.loc[tank_id, "init_vol"] = vol[-1]
+                step_tank_volumes[tank_id] = vol
 
+            # record results
+            df = pd.DataFrame({
+                **{"idx": np.repeat(self.t_idx, self.wait), "time": realization.index},
+                **{f"x_fsp_{i}": self.opt_model.x_fsp_value[:self.wait, i] for i in range(self.net.n_fsp)},
+                **{f"x_vsp_{i}": self.opt_model.x_vsp_value[:self.wait, i] for i in range(self.net.n_vsp)},
+                **{f"predicted_tariff": self.last_forecast.loc[realization.index, 'tariff'].values[:self.wait]},
+                **{f"realized_tariff": realization['tariff'].values[:self.wait]},
+                **{f"predicted_demand_{tank_id}":
+                       self.last_forecast.loc[realization.index, tank_data["demand"]].values[:self.wait]
+                   for tank_id, tank_data in self.net.tanks.iterrows()},
+                **{f"realized_demand_{tank_id}": realization.loc[:, tank_data["demand"]].values[:self.wait] for
+                   tank_id, tank_data in
+                   self.net.tanks.iterrows()},
+                **{f"vol_tank_{tank_id}": step_tank_volumes[tank_id].flatten() for tank_id in self.net.tanks.index}
+            },
+            )
+
+            self.results = pd.concat([self.results, df], ignore_index=True)
             self.t_idx += 1
             self.current_time = self.current_time + datetime.timedelta(hours=self.wait)
 
-    def apply_policy(self):
-        pass
+    def plot_results(self):
+        fig, axes = plt.subplots(nrows=self.net.n_tanks + 1, sharex=True)
+        for i, tank_id in enumerate(self.net.tanks.index):
+            axes[i].plot(self.results[f"vol_tank_{tank_id}"], label=f"vol_tank_{tank_id}")
+            axes[i].axhline(self.net.tanks.loc[tank_id, 'min_vol'], color='red', label='Min Volume' if i == 0 else "")
+            axes[i].axhline(self.net.tanks.loc[tank_id, 'max_vol'], color='red', label='Max Volume' if i == 0 else "")
+            axes[i].set_ylabel(f'Tank {tank_id}\nVolume\n($m^3$)')
+        axes[-1].bar(range(len(self.results)), self.results['predicted_tariff'], alpha=0.5, edgecolor='k')
+        axes[-1].set_ylabel('Predicted\nTariff\n(€/MWh)')
+        axes[-1].set_xlabel('Time (Hr)')
+        fig.align_ylabels()
+        plt.subplots_adjust(left=0.18, right=0.95)
 
+        fig, axes = plt.subplots(nrows=self.net.n_tanks + 1, sharex=True)
+        axes[0].plot(self.results['realized_tariff'])
+        axes[0].plot(self.results['predicted_tariff'])
+        axes[0].set_ylabel('Tariff\n(€/MWh)')
+        axes[0].text(0.01, 0.8, 'Electricity Tariff', transform=axes[0].transAxes)
+        for i, tank_id in enumerate(self.net.tanks.index):
+            axes[i + 1].plot(self.results[f"realized_demand_{tank_id}"], label=f"Realized")
+            axes[i + 1].plot(self.results[f"predicted_demand_{tank_id}"], label=f"Predicted")
+            axes[i + 1].set_ylabel(f'Demand\n($m^3/h$)')
+            axes[i + 1].text(0.01, 0.8, f'Tank {tank_id} Demand', transform=axes[i + 1].transAxes)
 
-class PlantSimulator():
-    """Obtain the 'real' system by one step given an action"""
-    def __init__(self):
-        pass
-
-    def step(self):
-        pass
+        axes[-1].set_xlabel('Time (Hr)')
+        handles, labels = axes[-1].get_legend_handles_labels()
+        fig.legend(handles, labels, loc='upper left', bbox_to_anchor=(0.12, 0.975), ncol=2)
+        fig.align_ylabels()
+        plt.subplots_adjust(left=0.15, right=0.95)
