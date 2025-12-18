@@ -168,9 +168,11 @@ class LPNetwork:
     def __init__(self, data_dir):
         self.data_dir = data_dir
 
+        tanks_dtypes = {"min_vol": float, "max_vol": float, "init_vol": float, "final_vol": float}
+
         self.fsp = pd.read_csv(os.path.join(self.data_dir, 'fsp.csv'), index_col=0)
         self.vsp = pd.read_csv(os.path.join(self.data_dir, 'vsp.csv'), index_col=0)
-        self.tanks = pd.read_csv(os.path.join(self.data_dir, 'tanks.csv'), index_col=0)
+        self.tanks = pd.read_csv(os.path.join(self.data_dir, 'tanks.csv'), index_col=0, dtype=tanks_dtypes)
 
         # placeholder for forecast values
         self.demands = None
@@ -210,7 +212,7 @@ class LPNetwork:
             else:
                 continue
 
-        vol = lhs.reshape(-1, 1) - cumm_tank_consumption
+        vol = lhs.reshape(-1, 1) - cumm_tank_consumption.reshape(-1, 1)
         return vol
 
     @staticmethod
