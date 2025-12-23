@@ -58,6 +58,19 @@ class DB:
         data['weekday'] = data.index.weekday
         data['month'] = data.index.month
 
+        fig, axes = plt.subplots(len(self.data.columns), 1, sharex=True)
+        for i, col in enumerate(self.data.columns):
+            axes[i].plot(data[col])
+            axes[i].set_title(col)
+            if col == "tariff":
+                axes[i].set_ylabel("Tariff (€/MWh)")
+            else:
+                axes[i].set_ylabel("Demand ($m^3/hr$)")
+            axes[i].grid()
+            axes[-1].set_xlabel("Time")
+        plt.subplots_adjust(hspace=0.32, top=0.95, bottom=0.1, right=0.92)
+        fig.autofmt_xdate()
+
         fig, ax = plt.subplots(len(self.data.columns), 1, sharex=True)
         axes = ax.ravel()
         for i, col in enumerate(self.data.columns):
@@ -106,19 +119,22 @@ class DB:
         for i, col in enumerate(data[columns].columns):
             temp = data[[col]]
             pivot_temp = temp.pivot_table(values=col, index=temp.index.date, columns=temp.index.hour)
+
             axes_box[i].boxplot(pivot_temp.values, positions=range(24))
-            axes_box[i].set_ylabel(col)
 
             axes_lines[i].plot(pivot_temp.values.T, c='C0', alpha=0.1)
-            axes_lines[i].set_ylabel(col)
             axes_lines[i].grid()
 
             axes_hist[i].hist(data[col], bins=25, edgecolor='k', alpha=0.5)
-            axes_hist[i].set_ylabel(col)
+            axes_hist[i].set_ylabel('Count')
             if col == "tariff":
                 axes_hist[i].set_xlabel("Tariff (€/MWh)")
+                axes_lines[i].set_ylabel("Tariff (€/MWh)")
+                axes_box[i].set_ylabel("Tariff (€/MWh)")
             else:
                 axes_hist[i].set_xlabel("Demand ($m^3/hr$)")
+                axes_lines[i].set_ylabel("Demand ($m^3/hr$)")
+                axes_box[i].set_ylabel("Demand ($m^3/hr$)")
 
         fig_box.align_ylabels()
         fig_box.subplots_adjust(bottom=0.1, top=0.95, left=0.1, right=0.9, hspace=0.15)
