@@ -26,9 +26,6 @@ class DB:
         demands = pd.read_csv(self.demands_data_path, index_col=0)
         tariffs = pd.read_csv(self.tariffs_data_path, index_col=0)[["tariff"]]
 
-        # Make sure no missing data in the tariff data set
-        self.tariffs = utils.data_completion(tariffs)
-
         tariffs.index = pd.to_datetime(tariffs.index, utc=True)
         demands.index = pd.to_datetime(demands.index, utc=True)
 
@@ -47,6 +44,10 @@ class DB:
         elec_demand_data = pd.concat([self.tariffs, self.demands], axis=1)
         elec_demand_data.index = pd.to_datetime(elec_demand_data.index, dayfirst=True)
         self.data = elec_demand_data
+
+        # Make sure no missing data in the tariff data set
+        self.data = utils.data_completion(self.data)
+        elec_demand_data = utils.data_completion(elec_demand_data)
         return elec_demand_data
 
     def visualize_data(self):
