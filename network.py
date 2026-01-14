@@ -193,7 +193,7 @@ class LPNetwork:
             tank_consumer_id = self.tanks.loc[tank_id, "demand"]
             cumm_tank_consumption = self.demands.iloc[:t].loc[:, tank_consumer_id].values.cumsum().reshape(-1, 1)
         else:
-            cumm_tank_consumption = sample.cumsum(axis=0)
+            cumm_tank_consumption = sample.cumsum(axis=0).reshape(-1, 1)
 
         lhs = self.tanks.loc[tank_id, "init_vol"]
         for i, (fsp_name, row_fsp) in enumerate(self.fsp.iterrows()):
@@ -212,7 +212,7 @@ class LPNetwork:
             else:
                 continue
 
-        vol = lhs.reshape(-1, 1) - cumm_tank_consumption.reshape(-1, 1)
+        vol = lhs.reshape(-1, 1) - cumm_tank_consumption
         return vol
 
     @staticmethod
