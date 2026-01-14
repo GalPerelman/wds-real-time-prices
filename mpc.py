@@ -5,17 +5,19 @@ import pandas as pd
 import numpy as np
 
 import utils
+import uncertainty_utils
 from opt import BaseOptModel, RO, SP
 from network import LPNetwork
 import forecast
 
 
 class MPC:
-    def __init__(self, net_path, opt_method, db, start_datetime, step_horizon, wait, experiment_horizon, realizations,
-                 forecast_method="xgb", milp=True, **kwargs):
+    def __init__(self, net_path, opt_method, db, uset_estimator, start_datetime, step_horizon, wait, experiment_horizon,
+                 realizations, forecast_method="xgb", milp=True, **kwargs):
         self.net_path = net_path
         self.opt_method = opt_method
         self.db = db
+        self.uset_estimator = uset_estimator
         self.start_datetime = utils.normalize_datetime(start_datetime)
         self.step_horizon = step_horizon
         self.wait = wait
@@ -48,13 +50,14 @@ class MPC:
         self.net = LPNetwork(self.net_path)
         if self.opt_method in ["lp", "pto"]:
             model = BaseOptModel(network=self.net, t=self.step_horizon, forecast=self.last_forecast,
-                                 database=self.db.data, milp=self.milp)
+                                 uset_estimator=self.uset_estimator, milp=self.milp)
         elif self.opt_method in ["ro", "RO"]:
             model = RO(network=self.net, t=self.step_horizon, omega=self.omega, gamma=self.gamma, k=self.k,
-                       forecast=self.last_forecast, database=self.db.data, milp=self.milp, uncertainty_set=self.u_set)
+                       forecast=self.last_forecast, uset_estimator=self.uset_estimator, milp=self.milp,
+                       uncertainty_set=self.u_set)
         elif self.opt_method in ["sp", "SP", "CC", "SAA"]:
             model = SP(network=self.net, t=self.step_horizon, epsilon=self.epsilon, alpha=self.alpha,
-                       forecast=self.last_forecast, database=self.db.data, milp=self.milp)
+                       forecast=self.last_forecast, uset_estimator=self.uset_estimator, milp=self.milp)
         else:
             raise ValueError(f"Unknown optimization method: {self.opt_method}")
 

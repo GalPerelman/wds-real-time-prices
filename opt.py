@@ -14,11 +14,11 @@ pd.set_option('display.width', 1000)
 
 
 class BaseOptModel:
-    def __init__(self, network, t, forecast, database, solver_params=None, solver_display=False, milp=True, **kwargs):
+    def __init__(self, network, t, forecast, uset_estimator=None, solver_params=None, solver_display=False, milp=True, **kwargs):
         self.network = network
         self.t = t
         self.forecast = forecast  # should be a pandas dataframe, first column prices, rest demands
-        self.database = database
+        self.uset_estimator = uset_estimator  # pre-fitted SpatioTemporalEllipsoidUncertaintyEstimator
         self.solver_params = solver_params
         self.solver_display = solver_display
         self.milp = milp
@@ -262,17 +262,15 @@ class BaseOptModel:
         elec_demand_data.index = pd.to_datetime(elec_demand_data.index, dayfirst=True)
         return elec_demand_data
 
-    def get_ellipsoid_uncertainty_set(self, database, start_hour, plot=False):
+    def get_ellipsoid_uncertainty_set(self, start_hour, plot=False):
         """
-        Can be used for RO but also for sampling-based methods where we need mu and Sigma
+        Extract mu and Sigma from pre-fitted uset_estimator for the given start_hour.
+        Used by RO and sampling-based methods (SP).
         """
-        # preprocessed_data = self.preprocess_data_for_uncertainty_sets()
-        est = uncertainty_utils.SpatioTemporalEllipsoidUncertaintyEstimator(
-            seasonal_demean=True,  # remove hour-of-day baseline
-            drop_incomplete_windows=True  # require full 24h days
-        )
-        est.fit(database)
-        u = est.get_uncertainty_set(horizon=self.t, start_hour=start_hour, use_residuals=False)
+        if self.uset_estimator is None:
+            raise ValueError("uset_estimator must be provided and pre-fitted")
+
+        u = self.uset_estimator.get_uncertainty_set(horizon=self.t, start_hour=start_hour, use_residuals=False)
         self.mu, self.sigma = u.mu, u.Sigma
         self.delta = np.asarray(np.linalg.cholesky(self.sigma).astype(np.float64))
         self.p = int(self.sigma.shape[0])
@@ -390,7 +388,7 @@ class RO(BaseOptModel):
         # generate the uncertainty set with every formulation call - ensure mu and cov are consistent with start hour
         if start_hour is None:
             start_hour = self.forecast.index[0].hour
-        self.get_ellipsoid_uncertainty_set(database=self.database, start_hour=start_hour, plot=False)
+        self.get_ellipsoid_uncertainty_set(start_hour=start_hour)
 
         mapping_mats = self.get_mapping_matrix()
         # Precompute multiplication of mapping matrices with delta
@@ -457,7 +455,7 @@ class RO(BaseOptModel):
         # generate the uncertainty set with every formulation call - ensure mu and cov are consistent with start hour
         if start_hour is None:
             start_hour = self.forecast.index[0].hour
-        self.get_ellipsoid_uncertainty_set(database=self.database, start_hour=start_hour, plot=False)
+        self.get_ellipsoid_uncertainty_set(start_hour=start_hour)
 
         mapping_mats = self.get_mapping_matrix()    # list of length m, each (n, p)
         rho = self.get_bou_deviations(self.k)       # shape (p,)
@@ -603,7 +601,7 @@ class SP(BaseOptModel):
         self.build_problem()
         if start_hour is None:
             start_hour = self.forecast.index[0].hour
-        self.get_ellipsoid_uncertainty_set(database=self.database, start_hour=start_hour, plot=False)
+        self.get_ellipsoid_uncertainty_set(start_hour=start_hour)
 
         # update the sampler with every formulation call - ensure consistency with start hour
         self.update_sampler()
@@ -688,8 +686,12 @@ class Simulation:
 
         self.n = n
         self.t = self.opt_model.t
-        self.p = self.opt_model.sigma.shape[0]
         self.rng = np.random.default_rng(seed=42)
+
+        if self.opt_model.sigma is None:
+            start_hour = self.opt_model.forecast.index[0].hour
+            self.opt_model.get_ellipsoid_uncertainty_set(start_hour=start_hour)
+        self.p = self.opt_model.sigma.shape[0]
 
         self.tank_volumes = {}
         self.is_violations = pd.DataFrame()
