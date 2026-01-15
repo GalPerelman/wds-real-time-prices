@@ -13,7 +13,7 @@ import forecast
 
 class MPC:
     def __init__(self, net_path, opt_method, db, uset_estimator, start_datetime, step_horizon, wait, experiment_horizon,
-                 realizations, forecast_method="xgb", milp=True, **kwargs):
+                 realizations, prices_col, demand_cols, forecast_method="xgb", milp=True, holiday_country='HU', **kwargs):
         self.net_path = net_path
         self.opt_method = opt_method
         self.db = db
@@ -25,6 +25,11 @@ class MPC:
         self.realizations = realizations
         self.forecast_method = forecast_method
         self.milp = milp
+
+        # Forecast configuration
+        self.prices_col = prices_col
+        self.demand_cols = demand_cols
+        self.holiday_country = holiday_country
 
         # different parameters for different optimization methods
         self.u_set = kwargs.get("uncertainty_set", "ellipsoid")
@@ -64,7 +69,12 @@ class MPC:
         self.opt_model = model
 
     def prepare_forecaster(self):
-        f = forecast.Forecast(db=self.db, prices_col="tariff", demand_cols=['a', 'b', 'c'])
+        f = forecast.Forecast(
+            training_data=self.db.forecast_training_data,
+            prices_col=self.prices_col,
+            demand_cols=self.demand_cols,
+            holiday_country=self.holiday_country
+        )
         f.preprocess()
 
         f.fit(model_name=self.forecast_method, target="demand")
@@ -78,7 +88,7 @@ class MPC:
     def preprocess_next_horizon(self):
         next_horizon_end = self.current_time + pd.to_timedelta(f'{self.step_horizon}h')
         next_horizon = pd.DataFrame(index=pd.date_range(start=self.current_time, end=next_horizon_end, freq="h"))
-        next_horizon_data = forecast.Forecast.construct_datetime_features(next_horizon)
+        next_horizon_data = forecast.Forecast.construct_datetime_features(next_horizon, holiday_country=self.holiday_country)
         return next_horizon_data
 
     def predict_next_horizon(self):
