@@ -81,7 +81,7 @@ class Forecast:
         if target == "price":
             reg = self.models[model_name]()
             x, y = self.data_split([self.prices_col])
-            reg.fit(x, y)
+            reg.fit(x, y.values.ravel())  # Use ravel() to convert column vector to 1D array (sklearn expects 1D)
             self.price_model = reg
 
     def predict(self, x, target):
