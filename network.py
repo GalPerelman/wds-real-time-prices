@@ -193,7 +193,10 @@ class LPNetwork:
             tank_consumer_id = self.tanks.loc[tank_id, "demand"]
             cumm_tank_consumption = self.demands.iloc[:t].loc[:, tank_consumer_id].values.cumsum().reshape(-1, 1)
         else:
-            cumm_tank_consumption = sample.cumsum(axis=0).reshape(-1, 1)
+            # Handle both 1D (MPC with wait) and 2D (Monte Carlo samples) inputs
+            cumm_tank_consumption = sample.cumsum(axis=0)
+            if cumm_tank_consumption.ndim == 1:
+                cumm_tank_consumption = cumm_tank_consumption.reshape(-1, 1)
 
         lhs = self.tanks.loc[tank_id, "init_vol"]
         for i, (fsp_name, row_fsp) in enumerate(self.fsp.iterrows()):
