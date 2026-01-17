@@ -113,9 +113,10 @@ class SpatioTemporalEllipsoidUncertaintyEstimator:
         Y_resid = self._vec_stack(resid_cube)
         # Sample stats
         self.mu_raw_ = Y_raw.mean(axis=0)
-        self.Sigma_raw_ = np.cov(Y_raw, rowvar=False)
         self.mu_resid_ = Y_resid.mean(axis=0)
-        self.Sigma_resid_ = np.cov(Y_resid, rowvar=False)
+
+        self.Sigma_raw_ = self._make_pd(np.cov(Y_raw, rowvar=False), method="eigs")
+        self.Sigma_resid_ = self._make_pd(np.cov(Y_resid, rowvar=False), method="eigs")
 
         # Index map
         self._index_map_ = self._build_index_map()
@@ -266,7 +267,8 @@ class SpatioTemporalEllipsoidUncertaintyEstimator:
         # Vectorize and estimate
         Y = resid_cube.reshape(resid_cube.shape[0], self._K_ * T)  # (M, K*T)
         mu_T = Y.mean(axis=0)
-        Sigma_T = np.cov(Y, rowvar=False)
+        # Sigma_T = np.cov(Y, rowvar=False)
+        Sigma_T = self._cov_regularized(Y)
 
         return UncertaintyResult(
             mu=mu_T,
@@ -328,6 +330,105 @@ class SpatioTemporalEllipsoidUncertaintyEstimator:
         K = len(self.variables_)
         H = self.hours_per_window
         return {k * H + h: (self.variables_[k], h) for k in range(K) for h in range(H)}
+
+    def _ensure_symmetric(self, A: np.ndarray) -> np.ndarray:
+        """Force exact symmetry to avoid numerical asymmetry."""
+        return 0.5 * (A + A.T)
+
+    def _make_pd(
+            self,
+            Sigma: np.ndarray,
+            *,
+            method: str = "shrinkage",  # "shrinkage" | "eigs"
+            eps_scale: float = 1e-8,  # jitter scale (relative)
+            min_eig_floor: float = 1e-10  # eigenvalue floor (absolute-ish after scaling)
+    ) -> np.ndarray:
+        """
+        Return a symmetric PD matrix close to Sigma.
+
+        Scientific justification:
+        - method="shrinkage": Ledoit–Wolf/OAS shrinkage covariance (well-conditioned PD estimator).
+        - method="eigs": nearest-PSD/PD by eigenvalue flooring + jitter (projection approach).
+        """
+        Sigma = self._ensure_symmetric(np.asarray(Sigma, dtype=float))
+
+        p = Sigma.shape[0]
+        if Sigma.shape[0] != Sigma.shape[1]:
+            raise ValueError("Sigma must be square.")
+
+        # Fast path: if already PD, return as-is
+        try:
+            np.linalg.cholesky(Sigma)
+            return Sigma
+        except np.linalg.LinAlgError:
+            pass
+
+        if method == "shrinkage":
+            # Try sklearn shrinkage estimators if available
+            try:
+                from sklearn.covariance import LedoitWolf, OAS  # type: ignore
+            except Exception:
+                # Fall back if sklearn isn't installed
+                method = "eigs"
+            else:
+                # We need samples to estimate shrinkage. If you only have Sigma here,
+                # fall back to eigs. (Alternative: store Y in fit; see note below.)
+                method = "eigs"
+
+        if method == "eigs":
+            # Eigenvalue flooring + jitter
+            w, V = np.linalg.eigh(Sigma)  # Sigma symmetric
+            # Scale-aware floor: use average variance as reference
+            avg_var = float(np.mean(np.clip(w, 0.0, None)))  # nonnegative part
+            if avg_var <= 0.0 or not np.isfinite(avg_var):
+                avg_var = 1.0
+
+            floor = max(min_eig_floor * avg_var, 0.0)
+            w_clipped = np.maximum(w, floor)
+            Sigma_pd = (V * w_clipped) @ V.T
+            Sigma_pd = self._ensure_symmetric(Sigma_pd)
+
+            # Add a tiny jitter to guarantee strict PD (helps when many eigenvalues are exactly floor)
+            jitter = eps_scale * avg_var
+            Sigma_pd = Sigma_pd + jitter * np.eye(p)
+
+            # sanity check
+            np.linalg.cholesky(Sigma_pd)
+            return Sigma_pd
+
+        raise ValueError(f"Unknown method='{method}'")
+
+    def _cov_regularized(self, Y: np.ndarray, *, method: str = "ledoitwolf") -> np.ndarray:
+        """
+        Estimate a well-conditioned PD covariance from samples Y (n_samples, n_features).
+
+        method:
+          - "ledoitwolf": Ledoit–Wolf shrinkage (recommended default)
+          - "oas": Oracle Approximating Shrinkage (often good when samples are very small)
+          - "sample+jitter": sample covariance + diagonal loading
+        """
+        Y = np.asarray(Y, dtype=float)
+        n, p = Y.shape
+
+        if method in {"ledoitwolf", "oas"}:
+            try:
+                from sklearn.covariance import LedoitWolf, OAS  # type: ignore
+            except Exception:
+                method = "sample+jitter"
+
+        if method == "ledoitwolf":
+            Sigma = LedoitWolf().fit(Y).covariance_
+            return self._ensure_symmetric(Sigma)
+
+        if method == "oas":
+            Sigma = OAS().fit(Y).covariance_
+            return self._ensure_symmetric(Sigma)
+
+        if method == "sample+jitter":
+            Sigma = np.cov(Y, rowvar=False)
+            return self._make_pd(Sigma, method="eigs", eps_scale=1e-8)
+
+        raise ValueError(f"Unknown method='{method}'")
 
 
 class Sampler:
