@@ -5,12 +5,15 @@ import matplotlib.pyplot as plt
 import utils
 
 
-class DB:
-    """ This holds the full data set for electricity tariffs and water demands
-        The full data set is used for generating forecasts and building uncertainty sets
-        If different ranges are needed for these purposes this will be handled in this class
+class DataManager:
+    """ Single source of truth for electricity tariffs and water demands data.
 
-        Other functionalities include visualization and analysis of the data
+    Provides separate methods for:
+    - Loading full dataset
+    - Getting data for uncertainty estimation (typically narrower date range)
+    - Getting data for forecaster training (typically larger date range)
+
+    Also includes visualization and analysis methods.
     """
     def __init__(self, demands_data_path, tariffs_data_path):
         self.demands_data_path = demands_data_path
@@ -19,6 +22,8 @@ class DB:
         self.demands = None
         self.tariffs = None
         self.data = None
+        self.uncertainty_training_data = None  # raw data for building the uncertainty set
+        self.forecast_training_data = None  # raw data for training the forecaster
 
         self.load_data()
 
@@ -49,6 +54,30 @@ class DB:
         self.data = utils.data_completion(self.data)
         elec_demand_data = utils.data_completion(elec_demand_data)
         return elec_demand_data
+
+    def set_uncertainty_training_window(self, start_date, end_date):
+        """Set the date range for uncertainty estimation training data.
+
+        Args:
+            start_date: Start of the window (e.g., '2022-06-01')
+            end_date: End of the window (e.g., '2022-07-31')
+        """
+        data = self.data.copy()
+        data = data.loc[(data.index >= start_date) & (data.index <= end_date)]
+        self.uncertainty_training_data = data
+        return data
+
+    def set_forecast_training_window(self, start_date, end_date):
+        """Set the date range for forecaster training data.
+
+        Args:
+            start_date: Start of the window (e.g., '2022-01-01')
+            end_date: End of the window (e.g., '2022-12-31')
+        """
+        data = self.data.copy()
+        data = data.loc[(data.index >= start_date) & (data.index <= end_date)]
+        self.forecast_training_data = data
+        return data
 
     def visualize_data(self):
         data = self.data.copy()
@@ -102,8 +131,6 @@ class DB:
                                 perc_list=[[1, 99], [25, 75], 50], ax=axes[i])
 
     def hourly_distribution(self):
-        import textwrap
-
         data = self.data.copy()
         data['day'] = data.index.day
         data['hour'] = data.index.hour
@@ -111,6 +138,9 @@ class DB:
         data['weekday'] = data.index.weekday
         data['month'] = data.index.month
         columns = data.columns.difference(['day', 'hour', 'day_of_year', 'weekday', 'month'])
+
+        mask = data.isna().any(axis=1)
+        rows_with_nan = data.loc[mask]
 
         fig_box, axes_box = plt.subplots(nrows=len(columns), sharex=True, figsize=(8, 6))
         fig_lines, axes_lines = plt.subplots(nrows=len(columns), sharex=True, sharey=False, figsize=(8, 6))
@@ -149,8 +179,8 @@ class DB:
 
 
 if __name__ == "__main__":
-    # exploratory data anlysis
-    db = DB('data/multi_tank/demands2022.csv', 'data/multi_tank/tariffs2022.csv')
-    db.visualize_data()
-    db.hourly_distribution()
+    # exploratory data analysis
+    dm = DataManager('data/multi_tank/demands2022.csv', 'data/multi_tank/tariffs2022.csv')
+    dm.visualize_data()
+    dm.hourly_distribution()
     plt.show()

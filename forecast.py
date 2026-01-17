@@ -148,3 +148,42 @@ class Forecast:
             pred = pred.reshape(-1, 1)
 
         return pred
+
+    def generate_forecast(self, start_date, end_date):
+        """
+        Generate forecast for a date range.
+
+        Args:
+            start_date: Start of forecast horizon (string or datetime)
+            end_date: End of forecast horizon (string or datetime)
+
+        Returns:
+            DataFrame with datetime index and columns: [prices_col] + demand_cols
+            Ready to use as input to optimization models.
+        """
+        # Create date range for forecast horizon
+        forecast_index = pd.date_range(start=start_date, end=end_date, freq='h')
+
+        # Match timezone of training data if it has one
+        if self.data.index.tz is not None:
+            forecast_index = forecast_index.tz_localize(self.data.index.tz)
+
+        forecast_df = pd.DataFrame(index=forecast_index)
+
+        # Add datetime features
+        forecast_features = self.construct_datetime_features(
+            forecast_df, holiday_country=self.holiday_country
+        )
+
+        # Generate predictions
+        price_pred = self.predict(forecast_features, target="price")
+        demand_pred = self.predict(forecast_features, target="demand")
+
+        # Combine into output DataFrame
+        result = pd.DataFrame(
+            index=forecast_index,
+            data=np.hstack([price_pred, demand_pred]),
+            columns=[self.prices_col] + self.demand_cols
+        )
+
+        return result
