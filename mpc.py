@@ -36,8 +36,7 @@ class MPC:
         self.omega = kwargs.get("omega", 1)  # for RO with Ellipsoidal Uncertainty
         self.gamma = kwargs.get("gamma", (2, 5))  # for RO with Budget of Uncertainty
         self.k = kwargs.get("k", 1.5)  # for RO with Budget of Uncertainty
-        self.epsilon = kwargs.get("epsilon", 0.05)  # for SP with Chance Constraints
-        self.alpha = kwargs.get("alpha", 1.0)  # for SP - CC relaxation over time parameter
+        self.alpha = kwargs.get("alpha", (0.95, 0.80))  # for SP: (alpha_start, alpha_end)
         self.u_set = kwargs.get("uncertainty_set", "ellipsoid")  # for RO
 
         self.t_idx = 0  # counter of time steps from start
@@ -61,7 +60,7 @@ class MPC:
                        forecast=self.last_forecast, uset_estimator=self.uset_estimator, milp=self.milp,
                        uncertainty_set=self.u_set)
         elif self.opt_method in ["sp", "SP", "CC", "SAA"]:
-            model = SP(network=self.net, t=self.step_horizon, epsilon=self.epsilon, alpha=self.alpha,
+            model = SP(network=self.net, t=self.step_horizon, alpha=self.alpha,
                        forecast=self.last_forecast, uset_estimator=self.uset_estimator, milp=self.milp)
         else:
             raise ValueError(f"Unknown optimization method: {self.opt_method}")

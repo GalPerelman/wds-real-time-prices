@@ -531,15 +531,35 @@ class RO(BaseOptModel):
 
 
 class SP(BaseOptModel):
-    """ Stochastic Optimization with Sample Average Approximation (SAA) and Chance Constraints """
-    def __init__(self, network, t, epsilon, alpha, objective_quantile=None, sampling_method="normal", n=100, **kwargs):
+    """
+    Stochastic Optimization with Sample Average Approximation (SAA) and Chance Constraints.
+
+    Parameters
+    ----------
+    alpha : tuple (alpha_start, alpha_end)
+        Confidence levels for chance constraints.
+        - alpha_start: confidence at t=0 (e.g., 0.95 = 95% probability of satisfaction)
+        - alpha_end: confidence at t=T-1 (e.g., 0.90), must be <= alpha_start
+        Lower alpha_end = more relaxed constraints at far horizons.
+
+    The confidence level interpolates linearly:
+        alpha_t = alpha_start + t * (alpha_end - alpha_start) / (T - 1)
+
+    For constant confidence (no temporal decay), use alpha_start == alpha_end.
+    """
+
+    def __init__(self, network, t, alpha, objective_quantile=None, sampling_method="normal", n=100, **kwargs):
         super().__init__(network, t, **kwargs)
 
-        self.epsilon = epsilon  # allowed violation rate
-        self.alpha = alpha  # decay rate for time-varying epsilons
+        # Unpack alpha tuple
+        self.alpha_start, self.alpha_end = alpha
         self.objective_quantile = objective_quantile
         self.n = n  # number of samples
         self.sampling_method = sampling_method
+
+        # Validation
+        if not (0 < self.alpha_end <= self.alpha_start <= 1):
+            raise ValueError(f"Require 0 < alpha_end <= alpha_start <= 1, got alpha={alpha}")
 
         self.sampler = None
         self.sample = None
@@ -656,10 +676,16 @@ class SP(BaseOptModel):
         sigma_rhs = np.sqrt(np.diag(var_rhs))  # shape (2m,)
 
         time_idx = np.tile(np.arange(self.t), self.n_tanks * 2)  # shape (2m,)
-        safety_coef = np.minimum(0.2, self.epsilon * (self.alpha ** time_idx))  # shape (2m,)
 
-        # quantiles z_i = phi^{-1}(1 - safety_coef)
-        z = norm.ppf(1 - safety_coef)  # shape (2m,)
+        # Linear interpolation of confidence level: alpha_t = alpha_start + t * (alpha_end - alpha_start) / (T - 1)
+        # When alpha_start == alpha_end, this gives constant confidence (no temporal decay)
+        if self.t > 1:
+            alpha_t = self.alpha_start + time_idx * (self.alpha_end - self.alpha_start) / (self.t - 1)
+        else:
+            alpha_t = np.full_like(time_idx, self.alpha_start, dtype=float)
+
+        # quantiles z_i = Phi^{-1}(alpha_t)
+        z = norm.ppf(alpha_t)  # shape (2m,)
 
         # safe RHS for each constraint
         b_safe = b[:m * 2] - z * sigma_rhs  # shape (2m,)
