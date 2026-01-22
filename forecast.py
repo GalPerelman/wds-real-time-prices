@@ -36,7 +36,7 @@ def get_holidays(years, country='HU', tz=None):
 
 
 class Forecast:
-    def __init__(self, training_data, prices_col, demand_cols, holiday_country='HU'):
+    def __init__(self, training_data, prices_col, demand_cols, holiday_country='HU', random_state=42):
         """
         Initialize forecaster with training data.
 
@@ -45,11 +45,13 @@ class Forecast:
             prices_col: Column name for electricity prices (e.g., 'tariff')
             demand_cols: List of column names for demands (e.g., ['a', 'b', 'c'])
             holiday_country: ISO country code for holidays (default 'HU'). Set to None to disable.
+            random_state: Random seed for ML models to ensure reproducibility (default 42).
         """
         self.prices_col = prices_col
         self.demand_cols = demand_cols
         self.data = deepcopy(training_data)
         self.holiday_country = holiday_country
+        self.random_state = random_state
 
         self.models = {"xgb": xgb.XGBRegressor, "rf": RandomForestRegressor}
 
@@ -128,12 +130,12 @@ class Forecast:
 
     def fit(self, model_name, target):
         if target == "demand":
-            reg = self.models[model_name]()
+            reg = self.models[model_name](random_state=self.random_state)
             x, y = self.data_split(self.demand_cols)
             reg.fit(x, y)
             self.demand_model = reg
         if target == "price":
-            reg = self.models[model_name]()
+            reg = self.models[model_name](random_state=self.random_state)
             x, y = self.data_split([self.prices_col])
             reg.fit(x, y.values.ravel())  # Use ravel() to convert column vector to 1D array (sklearn expects 1D)
             self.price_model = reg

@@ -1,3 +1,5 @@
+import math
+
 import matplotlib.pyplot as plt
 import numpy as np
 import cvxpy as cp
@@ -229,10 +231,26 @@ class BaseOptModel:
         self.x = cp.Variable(self.n_var * self.t, boolean=self.get_bool_vector())
         self.problem = cp.Problem(cp.Minimize(c @ self.x), [a @ self.x <= b])
 
-    def solve(self):
-        self.problem.solve(solver=cp.GUROBI)
-        print("Status:", self.problem.status)
-        print("Optimal value", self.problem.value)
+    def solve(self, seed=0):
+        """
+        Solve the optimization problem.
+
+        Args:
+            seed: Random seed for Gurobi solver to ensure reproducibility.
+                  MILP solvers use randomness in heuristics and branch-and-bound.
+                  Setting a fixed seed ensures identical results across runs.
+        """
+        # Default solver parameters for reproducibility
+        solver_opts = {
+            'Seed': seed,           # Fix random seed for reproducibility
+            'Threads': 1,           # Single thread for deterministic behavior
+        }
+        # Merge with user-provided solver params if any
+        if self.solver_params:
+            solver_opts.update(self.solver_params)
+
+        self.problem.solve(solver=cp.GUROBI, reoptimize=True, verbose=self.solver_display, **solver_opts)
+        print(f"Status: {self.problem.status} | Optimal value: {self.problem.value} | Model: {type(self).__name__}")
         if self.problem.status == "optimal":
             self.extract_solution()
         return self.problem.status, self.problem.value
@@ -546,9 +564,22 @@ class SP(BaseOptModel):
         alpha_t = alpha_start + t * (alpha_end - alpha_start) / (T - 1)
 
     For constant confidence (no temporal decay), use alpha_start == alpha_end.
+
+    sample : np.ndarray, optional
+        Pre-generated sample array of shape (p, n) to use for SAA objective.
+        If provided, this sample is used instead of generating a new one.
+
+        Usage cases:
+        - POR experiments: Pass a shared sample to ensure all methods (LP, RO, SP) are
+          optimized and evaluated against identical scenarios. This guarantees fair
+          comparison and monotonic cost-reliability tradeoffs.
+        - MPC framework: Leave as None to generate fresh samples at each formulation call.
+          This ensures samples are consistent with the current start hour's mu and Sigma,
+          which change as the rolling horizon advances through different times of day.
     """
 
-    def __init__(self, network, t, alpha, objective_quantile=None, sampling_method="normal", n=100, **kwargs):
+    def __init__(self, network, t, alpha, objective_quantile=None, sampling_method="normal", n=100,
+                 sample=None, **kwargs):
         super().__init__(network, t, **kwargs)
 
         # Unpack alpha tuple
@@ -556,6 +587,7 @@ class SP(BaseOptModel):
         self.objective_quantile = objective_quantile
         self.n = n  # number of samples
         self.sampling_method = sampling_method
+        self._shared_sample = sample  # Pre-generated sample (optional)
 
         # Validation
         if not (0 < self.alpha_end <= self.alpha_start <= 1):
@@ -566,12 +598,23 @@ class SP(BaseOptModel):
 
     def update_sampler(self):
         """
-        we update the sampler object with every formulation call
-        this is done to ensure the that mu and sigma are according to the start time
+        Update the sampler object with every formulation call.
+
+        Behavior depends on whether a shared sample was provided at initialization:
+        - With shared sample (POR experiments): Uses the pre-generated sample to ensure
+          all methods are compared against identical scenarios for fair evaluation.
+        - Without shared sample (MPC framework): Generates fresh samples using current
+          mu and Sigma, which are consistent with the rolling horizon's start hour.
+          This is necessary because the uncertainty set rotates as time-of-day changes.
         """
-        self.sampler = uncertainty_utils.Sampler(self.mu, self.sigma, p=self.sigma.shape[0], t=self.t, n=self.n)
-        # sample shape = (p, n) where p is uncertainty dimension - p = n_tanks + 1
-        self.sample = self.sampler.draw_sample(sampling_method=self.sampling_method)
+        if self._shared_sample is not None:
+            # Use pre-generated shared sample for consistency across experiments
+            self.sample = self._shared_sample
+            self.n = self.sample.shape[1]  # Update n to match sample size
+        else:
+            self.sampler = uncertainty_utils.Sampler(self.mu, self.sigma, p=self.sigma.shape[0], t=self.t, n=self.n)
+            # sample shape = (p, n) where p is uncertainty dimension - p = n_tanks + 1
+            self.sample = self.sampler.draw_sample(sampling_method=self.sampling_method)
 
     def get_power_block_3d(self):
         power_blocks = np.concatenate([
@@ -704,13 +747,32 @@ class SP(BaseOptModel):
 
 
 class Simulation:
-    def __init__(self, opt_model, sampling_method, n=1000):
+    """
+    Monte Carlo simulation for evaluating optimization solutions.
+
+    Parameters
+    ----------
+    opt_model : BaseOptModel
+        Solved optimization model to evaluate.
+    sampling_method : str
+        Sampling method ('normal', 'uniform').
+    n : int
+        Number of scenarios to simulate (ignored if sample is provided).
+    sample : np.ndarray, optional
+        Pre-generated sample array of shape (p, n) to use for evaluation.
+
+        Usage contexts:
+        - POR experiments: Pass a shared sample to ensure all methods are evaluated
+          against identical scenarios. This guarantees fair comparison.
+        - Standalone evaluation: Leave as None to generate fresh samples.
+    """
+
+    def __init__(self, opt_model, sampling_method, n=1000, sample=None):
         self.opt_model = opt_model
         self.sampling_method = sampling_method
         self.x_fsp_value = opt_model.x_fsp_value
         self.x_vsp_value = opt_model.x_vsp_value
 
-        self.n = n
         self.t = self.opt_model.t
         self.rng = np.random.default_rng(seed=42)
 
@@ -726,8 +788,15 @@ class Simulation:
 
         self.mu = self.opt_model.get_nominal()
         self.cov = self.opt_model.sigma
-        self.sampler = uncertainty_utils.Sampler(mu=self.mu, cov=self.cov, p=self.p, t=self.t, n=self.n)
-        self.sample = self.sampler.draw_sample(sampling_method=self.sampling_method)
+
+        # Use shared sample if provided, otherwise generate new sample
+        if sample is not None:
+            self.sample = sample
+            self.n = sample.shape[1]
+        else:
+            self.n = n
+            self.sampler = uncertainty_utils.Sampler(mu=self.mu, cov=self.cov, p=self.p, t=self.t, n=self.n)
+            self.sample = self.sampler.draw_sample(sampling_method=self.sampling_method)
 
         self.calculate_tank_volumes()
         self.calculate_cost()
