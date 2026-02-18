@@ -432,14 +432,14 @@ class SpatioTemporalEllipsoidUncertaintyEstimator:
 
 
 class Sampler:
-    def __init__(self, mu, cov, p, t, n: int, data=None):
+    def __init__(self, mu, cov, p, t, n: int, data=None, seed: int = 42):
         self.mu = mu
         self.cov = cov
         self.p = p  # uncertainty dimension
         self.n = n
         self.t = t
 
-        self.rng = np.random.default_rng(seed=42)
+        self.rng = np.random.default_rng(seed=seed)
 
     def draw_sample(self, sampling_method):
         if sampling_method in ['gaussian', 'ellipsoid', 'normal']:
@@ -467,6 +467,51 @@ class Sampler:
         high = self.mu + n_std * std_full
         sample = self.rng.uniform(low=low, high=high, size=(self.n, len(low))).T
         return sample
+
+    @staticmethod
+    def generate_shared_sample(mu, cov, n: int, sampling_method: str = 'normal', seed: int = 42,
+                               use_stable_sampling: bool = True) -> np.ndarray:
+        """
+        Generate a sample that can be shared across SP optimization and Simulation.
+
+        Args:
+            mu: Mean vector
+            cov: Covariance matrix
+            n: Number of scenarios to generate
+            sampling_method: 'normal' or 'uniform'
+            seed: Random seed for reproducibility
+            use_stable_sampling: If True, use eigendecomposition-based sampling for numerical stability.
+                                 Recommended for ill-conditioned covariance matrices.
+
+        Returns:
+            Sample array of shape (p, n) where p is the dimension of mu
+        """
+        rng = np.random.default_rng(seed=seed)
+
+        if sampling_method in ['gaussian', 'ellipsoid', 'normal']:
+            non_zero_indices = np.nonzero(mu)[0]
+            mu_non_zero = mu[non_zero_indices]
+            cov_non_zero = cov[np.ix_(non_zero_indices, non_zero_indices)]
+
+            if use_stable_sampling:
+                # Eigendecomposition-based sampling for numerical stability
+                samples_non_zero = Sampler._sample_multivariate_normal_stable(
+                    mu_non_zero, cov_non_zero, n, rng
+                )
+            else:
+                # Standard Cholesky-based sampling (can fail for ill-conditioned cov)
+                samples_non_zero = rng.multivariate_normal(mu_non_zero, cov_non_zero, size=n).T
+
+            output_samples = np.zeros((len(mu), n))
+            output_samples[non_zero_indices] = samples_non_zero
+            return output_samples
+        elif sampling_method in ['uniform']:
+            std_full = np.sqrt(np.diag(cov))
+            low = mu - 3 * std_full
+            high = mu + 3 * std_full
+            return rng.uniform(low=low, high=high, size=(n, len(low))).T
+        else:
+            raise ValueError(f"Unknown sampling method: {sampling_method}")
 
     def plot_samples(self, sample):
         k = self.p // self.t
