@@ -1,0 +1,42 @@
+# Static Optimization Experiment
+# Run a single RO optimization with Monte Carlo simulation
+
+data:
+  network_path: "data/multi_tank"
+  demands_path: "data/multi_tank/demands2022.csv"
+  tariffs_path: "data/multi_tank/tariffs2022.csv"
+
+columns:
+  prices_col: "tariff"
+  demand_cols: ["a", "b", "c"]
+
+training:
+  forecast:
+    start: "2022-01-01"
+    end: "2022-09-30"
+  uncertainty:
+    start: "2022-06-01"
+    end: "2022-07-31"
+
+forecast:
+  model: "xgb"
+  holiday_country: "HU"
+
+experiment:
+  name: "static_ro_ellipsoid"
+  type: "static"
+
+  forecast_period:
+    start: "2022-10-01"
+    end: "2022-10-01 23:00"
+
+  model:
+    opt_method: "lp"
+
+  simulation:
+    n_samples: 500
+
+  options:
+    milp: true
+    plot: true
+    t: 24

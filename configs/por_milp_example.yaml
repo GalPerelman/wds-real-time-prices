@@ -1,0 +1,81 @@
+# Price of Robustness Comparison Experiment
+# Compare multiple optimization methods with parameter sweeps
+### FOR WDSA-CCWI ABSTRACT ###
+
+data:
+  network_path: "data/multi_tank"
+  demands_path: "data/multi_tank/demands2022.csv"
+  tariffs_path: "data/multi_tank/tariffs2022.csv"
+
+columns:
+  prices_col: "tariff"
+  demand_cols: ["a", "b", "c"]
+
+training:
+  forecast:
+    start: "2022-01-01"
+    end: "2022-09-30"
+  uncertainty:
+    start: "2022-08-01"
+    end: "2022-09-30"
+
+forecast:
+  model: "xgb"
+  holiday_country: "HU"
+
+experiment:
+  name: "por_comparison"
+  type: "por"
+
+  forecast_period:
+    start: "2022-10-02"
+    end: "2022-10-03"
+
+  methods:
+    - group: "RO-Ellipsoid"
+      opt_method: "ro"
+      params:
+        uncertainty_set: "ellipsoid"
+      sweep:
+        omega: [0.5, 1.0, 1.5, 2.0, 2.5, 3.0]
+
+    - group: "RO-BOU"
+      opt_method: "ro"
+      params:
+        uncertainty_set: "bou"
+      sweep:
+        gamma: [ [0, 2], [0, 4], [0, 6], [0, 8], [0, 10], [0, 12], [0, 14], [0, 16], [0, 18] ]
+
+    # SAA (Stochastic Programming) - sweep alpha (start, end) pairs
+    - group: "CC-SP"
+      opt_method: "sp"
+      sweep:
+        alpha: [[0.80, 0.8], [0.85, 0.85], [0.90, 0.9], [0.95, 0.95], [0.99, 0.99], [0.995, 0.995]]
+
+    - group: "CC-SP-relaxed"
+      opt_method: "sp"
+      sweep:
+        alpha: [[0.80, 0.75], [0.85, 0.8], [0.90, 0.85], [0.95, 0.9], [0.99, 0.94], [0.995, 0.945]]
+
+  # Optional: custom colors/markers per group
+  group_styles:
+    RO-Ellipsoid:
+      color: "#105A7F"
+      marker: "o"
+    RO-BOU:
+      color: "#229FBF"
+      marker: "o"
+    CC-SP:
+      color: "#FF9E00" #"#FFC533"
+      marker: "o"
+    CC-SP-relaxed:
+      color: "#229FBF"
+      marker: "s"
+
+  simulation:
+    n_samples: 500
+
+  options:
+    milp: true
+    plot: true
+    t: 24
