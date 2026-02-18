@@ -536,17 +536,6 @@ class RO(BaseOptModel):
         else:
             raise ValueError(f"Unknown uncertainty set type: {self.uncertainty_set}")
 
-    def solve(self):
-        self.problem.solve(solver=cp.GUROBI,
-                           verbose=self.solver_display,
-                           )
-
-        print("Status:", self.problem.status)
-        print("Optimal value", self.problem.value)
-        if self.problem.status == "optimal":
-            self.extract_solution()
-        return self.problem.status, self.problem.value
-
 
 class SP(BaseOptModel):
     """
@@ -736,13 +725,6 @@ class SP(BaseOptModel):
 
         self.problem = cp.Problem(cp.Minimize(obj), constraints)
 
-    def solve(self):
-        self.problem.solve(solver=cp.GUROBI)
-        print("Status:", self.problem.status)
-        print("Optimal value", self.problem.value)
-        if self.problem.status == "optimal":
-            self.extract_solution()
-        return self.problem.status, self.problem.value
 
 
 
@@ -821,7 +803,6 @@ class Simulation:
             tank_ub = np.tile(tank_data['max_vol'], self.t)
             tank_lb = np.tile(tank_data['min_vol'], self.t)
             tank_lb[-1] = tank_data['final_vol']
-            tank_lb, tank_ub = tank_lb, tank_ub
             tank_is_violation = np.logical_or(np.any(vol.T - tank_lb < 0, axis=1), np.any(tank_ub - vol.T < 0, axis=1))
 
             violated_vol = (np.sum(np.maximum(0, tank_lb.reshape(-1, 1) - vol), axis=1)
