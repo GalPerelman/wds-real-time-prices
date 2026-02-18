@@ -62,6 +62,73 @@ class RealizationsBuffer:
         if not available:
             return None
         return self.data.loc[available]
+
+
+class NaiveModel:
+    """
+    Naive forecast model following sklearn estimator interface.
+
+    For each time t, prediction = mean(value[t-168], value[t-336], ...)
+    Averages the same hour/weekday from past n_weeks.
+    """
+    def __init__(self, buffer, n_weeks=1):
+        """
+        Initialize naive model.
+
+        Args:
+            buffer: RealizationsBuffer with historical data.
+            n_weeks: Number of weeks to average over (default 1 = weekly naive).
+        """
+        self.buffer = buffer
+        self.n_weeks = n_weeks
+        self.target_cols = None
+
+    def fit(self, X, y):
+        """
+        Fit method - infers target columns from y.
+        Args:
+            X: Feature matrix (ignored).
+            y: Target values (DataFrame or Series with column names).
+        """
+        if hasattr(y, 'columns'):
+            self.target_cols = y.columns.tolist()
+        elif hasattr(y, 'name') and y.name is not None:
+            self.target_cols = [y.name]
+        else:
+            raise ValueError("y must be a DataFrame or Series with column/name attribute")
+        return self
+
+    def predict(self, X):
+        """
+        Predict using average of past n_weeks at same hour/weekday.
+
+        Args:
+            X: DataFrame with datetime index indicating times to predict.
+
+        Returns:
+            ndarray of shape (n_samples, n_targets) with predictions.
+        """
+        if self.target_cols is None:
+            raise ValueError("Model not fitted. Call fit() first.")
+
+        predictions = []
+
+        for target_time in X.index:
+            target_time = pd.Timestamp(target_time)
+            lag_times = [target_time - pd.Timedelta(hours=168 * week) for week in range(1, self.n_weeks + 1)]
+            lag_values = self.buffer.get_values(lag_times)
+
+            if lag_values is not None and len(lag_values) > 0:
+                pred_row = lag_values[self.target_cols].mean().values
+            else:
+                # Fallback: use most recent available value
+                pred_row = self.buffer.data[self.target_cols].iloc[-1].values
+
+            predictions.append(pred_row)
+
+        return np.array(predictions)
+
+
 def get_holidays(years, country='HU', tz=None):
     """
     Get holiday dates for specified years and country.
@@ -106,7 +173,7 @@ class Forecast:
         self.buffer = buffer
         self.random_state = random_state
 
-        self.models = {"xgb": xgb.XGBRegressor, "rf": RandomForestRegressor}
+        self.models = {"xgb": xgb.XGBRegressor, "rf": RandomForestRegressor, "naive": NaiveModel}
 
         self.price_model = None
         self.demand_model = None
@@ -181,16 +248,43 @@ class Forecast:
         y = self.data[target_cols]
         return x, y
 
-    def fit(self, model_name, target):
+    def fit(self, model_name, target, **model_params):
+        """
+        Fit a forecasting model.
+
+        Args:
+            model_name: Model type ('xgb', 'rf', 'naive').
+            target: What to predict ('demand' or 'price').
+            **model_params: Model-specific hyperparameters, e.g.:
+                - naive: n_weeks=4
+                - xgb/rf: random_state=42, n_estimators=100, max_depth=5, etc.
+        """
+        if model_name not in self.models:
+            raise ValueError(f"Unknown model: {model_name}. Available: {list(self.models.keys())}")
+
+        # Create model instance with appropriate parameters
+        if model_name == 'naive':
+            if self.buffer is None:
+                raise ValueError("Naive model requires buffer. Pass buffer to Forecast.__init__().")
+            reg = self.models[model_name](buffer=self.buffer, **model_params)
+        else:
+            # Use self.random_state as default for reproducibility
+            if 'random_state' not in model_params:
+                model_params = {**model_params, 'random_state': self.random_state}
+            reg = self.models[model_name](**model_params)
+
+        # Fit model
+        x, y = self.data_split(self.demand_cols if target == "demand" else [self.prices_col])
+
         if target == "demand":
-            reg = self.models[model_name](random_state=self.random_state)
-            x, y = self.data_split(self.demand_cols)
             reg.fit(x, y)
             self.demand_model = reg
-        if target == "price":
-            reg = self.models[model_name](random_state=self.random_state)
-            x, y = self.data_split([self.prices_col])
-            reg.fit(x, y.values.ravel())  # Use ravel() to convert column vector to 1D array (sklearn expects 1D)
+        elif target == "price":
+            # For sklearn models, use ravel() for single target
+            if model_name != 'naive':
+                reg.fit(x, y.values.ravel())
+            else:
+                reg.fit(x, y)
             self.price_model = reg
 
     def predict(self, x, target):
