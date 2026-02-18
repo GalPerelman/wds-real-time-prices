@@ -182,7 +182,7 @@ class Forecast:
         self.data_completion()
         self.data = self.construct_datetime_features(self.data, holiday_country=self.holiday_country)
         # self.lag_features(cols_to_lag={**{col: 6 for col in self.demand_cols}, **{self.prices_col: 5}})
-        self.data.dropna()
+        self.data = self.data.dropna()
 
     def data_completion(self):
         knn_impute = KNNImputer(n_neighbors=3)
@@ -320,9 +320,7 @@ class Forecast:
         forecast_df = pd.DataFrame(index=forecast_index)
 
         # Add datetime features
-        forecast_features = self.construct_datetime_features(
-            forecast_df, holiday_country=self.holiday_country
-        )
+        forecast_features = self.construct_datetime_features(forecast_df, holiday_country=self.holiday_country)
 
         # Generate predictions
         price_pred = self.predict(forecast_features, target="price")
