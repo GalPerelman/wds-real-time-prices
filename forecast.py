@@ -11,6 +11,57 @@ from sklearn.impute import KNNImputer
 from sklearn.ensemble import RandomForestRegressor
 
 
+class RealizationsBuffer:
+    """
+    Buffer for storing realized values, updated daily at midnight.
+
+    Designed for AMR/AMI systems where meter readings are available daily.
+    This is a data management class - it stores and retrieves data not tied to any specific forecasting method
+    """
+    def __init__(self, initial_data):
+        self.data = initial_data.copy()
+        self.last_update_date = self.data.index[-1].normalize()
+
+    def should_update(self, current_time):
+        """
+        Check if buffer should be updated (at midnight).
+        True if current_time is at midnight and we haven't updated today.
+        """
+        current_date = pd.Timestamp(current_time).normalize()
+        is_midnight = pd.Timestamp(current_time).hour == 0
+        is_new_day = current_date > self.last_update_date
+        return is_midnight and is_new_day
+
+    def update(self, new_realizations):
+        """
+        Update buffer with new realized values (typically previous day's data).
+        """
+        # Append new data
+        self.data = pd.concat([self.data, new_realizations])
+
+        # Remove duplicates (keep last in case of overlap)
+        self.data = self.data[~self.data.index.duplicated(keep='last')]
+
+        # Sort by index
+        self.data = self.data.sort_index()
+
+        # Update last update date
+        self.last_update_date = new_realizations.index[-1].normalize()
+
+    def get_values(self, times):
+        """
+        Get values at multiple times.
+
+        Args:
+            times: List of datetimes to look up.
+
+        Returns:
+            DataFrame with values at those times (missing times excluded).
+        """
+        available = [t for t in times if pd.Timestamp(t) in self.data.index]
+        if not available:
+            return None
+        return self.data.loc[available]
 def get_holidays(years, country='HU', tz=None):
     """
     Get holiday dates for specified years and country.
@@ -36,7 +87,7 @@ def get_holidays(years, country='HU', tz=None):
 
 
 class Forecast:
-    def __init__(self, training_data, prices_col, demand_cols, holiday_country='HU', random_state=42):
+    def __init__(self, training_data, prices_col, demand_cols, holiday_country='HU', buffer=None, random_state=42):
         """
         Initialize forecaster with training data.
 
@@ -45,12 +96,14 @@ class Forecast:
             prices_col: Column name for electricity prices (e.g., 'tariff')
             demand_cols: List of column names for demands (e.g., ['a', 'b', 'c'])
             holiday_country: ISO country code for holidays (default 'HU'). Set to None to disable.
-            random_state: Random seed for ML models to ensure reproducibility (default 42).
+            buffer: RealizationsBuffer instance (required for naive method).
+            random_state: Random seed for ML models (XGBoost, RandomForest) for reproducibility.
         """
         self.prices_col = prices_col
         self.demand_cols = demand_cols
         self.data = deepcopy(training_data)
         self.holiday_country = holiday_country
+        self.buffer = buffer
         self.random_state = random_state
 
         self.models = {"xgb": xgb.XGBRegressor, "rf": RandomForestRegressor}

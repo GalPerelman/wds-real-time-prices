@@ -30,6 +30,7 @@ class MPC:
         self.prices_col = prices_col
         self.demand_cols = demand_cols
         self.holiday_country = holiday_country
+        self.buffer = forecast.RealizationsBuffer(self.db.forecast_training_data)
 
         # different parameters for different optimization methods
         self.u_set = kwargs.get("uncertainty_set", "ellipsoid")
@@ -72,7 +73,8 @@ class MPC:
             training_data=self.db.forecast_training_data,
             prices_col=self.prices_col,
             demand_cols=self.demand_cols,
-            holiday_country=self.holiday_country
+            holiday_country=self.holiday_country,
+            buffer=self.buffer
         )
         f.preprocess()
 
@@ -99,6 +101,13 @@ class MPC:
 
     def run(self):
         for t in range(self.experiment_horizon // self.wait):
+            if self.buffer.should_update(self.current_time):
+                yesterday_end = self.current_time - pd.Timedelta(hours=1)
+                yesterday_start = self.current_time - pd.Timedelta(hours=24)
+                prev_day = self.realizations.loc[yesterday_start:yesterday_end]
+                if not prev_day.empty:
+                    self.buffer.update(prev_day)
+
             self.predict_next_horizon()
             self.opt_model.forecast = self.last_forecast
             self.opt_model.apply_forecast()
