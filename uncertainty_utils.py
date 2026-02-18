@@ -513,6 +513,88 @@ class Sampler:
         else:
             raise ValueError(f"Unknown sampling method: {sampling_method}")
 
+    @staticmethod
+    def _sample_multivariate_normal_stable(mu, cov, n, rng, min_eigenvalue_ratio=1e-10):
+        """
+        Sample from multivariate normal using eigendecomposition for numerical stability.
+
+        This method is more stable than Cholesky decomposition for ill-conditioned
+        covariance matrices. It preserves the covariance structure better.
+
+        Args:
+            mu: Mean vector of shape (p,)
+            cov: Covariance matrix of shape (p, p)
+            n: Number of samples
+            rng: numpy random generator
+            min_eigenvalue_ratio: Minimum eigenvalue as ratio of max eigenvalue.
+                                  Eigenvalues below this threshold are clamped.
+
+        Returns:
+            Samples of shape (p, n)
+        """
+        # Eigendecomposition: cov = V @ diag(eigenvalues) @ V.T
+        eigenvalues, eigenvectors = np.linalg.eigh(cov)
+
+        # Clamp negative/tiny eigenvalues relative to the maximum
+        max_eigenvalue = eigenvalues.max()
+        min_allowed = max_eigenvalue * min_eigenvalue_ratio
+        eigenvalues_clamped = np.maximum(eigenvalues, min_allowed)
+
+        # Generate standard normal samples: z ~ N(0, I)
+        z = rng.standard_normal((n, len(mu)))
+
+        # Transform: x = mu + V @ sqrt(Lambda) @ z.T
+        # Equivalently: x = mu + (z @ (V * sqrt(Lambda)).T).T
+        sqrt_lambda = np.sqrt(eigenvalues_clamped)
+        samples = mu + (z @ (eigenvectors * sqrt_lambda).T)
+
+        return samples.T  # Return shape (p, n)
+
+    @staticmethod
+    def diagnose_sample(mu, cov, sample):
+        """
+        Diagnostic function to check if sample statistics match expected values.
+
+        Args:
+            mu: Expected mean vector
+            cov: Expected covariance matrix
+            sample: Sample array of shape (p, n)
+
+        Returns:
+            Dictionary with diagnostic information
+        """
+        sample_mean = sample.mean(axis=1)
+        sample_var = sample.var(axis=1)
+        expected_var = np.diag(cov)
+
+        # Mean comparison
+        mean_diff = sample_mean - mu
+        mean_rel_error = np.abs(mean_diff) / (np.abs(mu) + 1e-10)
+
+        # Variance comparison
+        var_ratio = sample_var / (expected_var + 1e-10)
+
+        # Covariance condition number
+        eigenvalues = np.linalg.eigvalsh(cov)
+        condition_number = eigenvalues.max() / (eigenvalues.min() + 1e-15)
+
+        return {
+            'sample_mean_first5': sample_mean[:5],
+            'expected_mean_first5': mu[:5],
+            'mean_rel_error_max': mean_rel_error.max(),
+            'mean_rel_error_mean': mean_rel_error.mean(),
+            'sample_var_first5': sample_var[:5],
+            'expected_var_first5': expected_var[:5],
+            'var_ratio_first5': var_ratio[:5],
+            'var_ratio_mean': var_ratio.mean(),
+            'var_ratio_min': var_ratio.min(),
+            'var_ratio_max': var_ratio.max(),
+            'cov_condition_number': condition_number,
+            'cov_min_eigenvalue': eigenvalues.min(),
+            'cov_max_eigenvalue': eigenvalues.max(),
+            'n_negative_eigenvalues': (eigenvalues < 0).sum(),
+        }
+
     def plot_samples(self, sample):
         k = self.p // self.t
         fig, axes = plt.subplots(k, 1, figsize=(10, 6))
