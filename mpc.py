@@ -48,6 +48,7 @@ class MPC:
         self.net = None
         self.opt_model = None
         self.results = pd.DataFrame()
+        self.n_infeasible = 0  # count of iterations where solver failed to find optimal solution
 
         self.forecaster = self.prepare_forecaster()
         self.predict_next_horizon()
@@ -110,6 +111,12 @@ class MPC:
             self.opt_model.apply_forecast()
             self.opt_model.formulate(start_hour=self.current_time.hour)
             status, cost = self.opt_model.solve()
+
+            if status != 'optimal':
+                self.n_infeasible += 1
+                self.current_time = self.current_time + datetime.timedelta(hours=self.wait)
+                self.t_idx += 1
+                continue
 
             step_end = self.current_time + datetime.timedelta(hours=self.wait - 1)
             realization = self.realizations.loc[self.current_time: step_end]
