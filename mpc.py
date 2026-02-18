@@ -40,7 +40,6 @@ class MPC:
         self.gamma = kwargs.get("gamma", (2, 5))  # for RO with Budget of Uncertainty
         self.k = kwargs.get("k", 1.5)  # for RO with Budget of Uncertainty
         self.alpha = kwargs.get("alpha", (0.95, 0.80))  # for SP: (alpha_start, alpha_end)
-        self.u_set = kwargs.get("uncertainty_set", "ellipsoid")  # for RO
 
         self.t_idx = 0  # counter of time steps from start
         self.current_time = self.start_datetime  # timestamp of the first step
@@ -83,10 +82,6 @@ class MPC:
         f.fit(model_name=self.forecast_method, target="demand", **self.forecast_params)
         f.fit(model_name=self.forecast_method, target="price", **self.forecast_params)
         return f
-
-    def update_parameters(self):
-        """Push new Parameters (prices/demands/initial state, etc.) into the model."""
-        pass
 
     def preprocess_next_horizon(self):
         next_horizon_end = self.current_time + pd.to_timedelta(f'{self.step_horizon}h')
