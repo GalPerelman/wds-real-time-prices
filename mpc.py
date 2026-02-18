@@ -13,7 +13,8 @@ import forecast
 
 class MPC:
     def __init__(self, net_path, opt_method, db, uset_estimator, start_datetime, step_horizon, wait, experiment_horizon,
-                 realizations, prices_col, demand_cols, forecast_method="xgb", milp=True, holiday_country='HU', **kwargs):
+                 realizations, prices_col, demand_cols, forecast_method="xgb", forecast_params=None,
+                 milp=True, holiday_country='HU', **kwargs):
         self.net_path = net_path
         self.opt_method = opt_method
         self.db = db
@@ -24,6 +25,7 @@ class MPC:
         self.experiment_horizon = experiment_horizon
         self.realizations = realizations
         self.forecast_method = forecast_method
+        self.forecast_params = forecast_params or {}
         self.milp = milp
 
         # Forecast configuration
@@ -78,8 +80,8 @@ class MPC:
         )
         f.preprocess()
 
-        f.fit(model_name=self.forecast_method, target="demand")
-        f.fit(model_name=self.forecast_method, target="price")
+        f.fit(model_name=self.forecast_method, target="demand", **self.forecast_params)
+        f.fit(model_name=self.forecast_method, target="price", **self.forecast_params)
         return f
 
     def update_parameters(self):
