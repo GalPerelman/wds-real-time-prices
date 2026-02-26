@@ -567,7 +567,7 @@ class SP(BaseOptModel):
           which change as the rolling horizon advances through different times of day.
     """
 
-    def __init__(self, network, t, alpha, objective_quantile=None, sampling_method="normal", n=100,
+    def __init__(self, network, t, alpha, objective_quantile=None, sampling_method="normal", n=1000,
                  sample=None, **kwargs):
         super().__init__(network, t, **kwargs)
 
