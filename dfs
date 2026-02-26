@@ -1,0 +1,70 @@
+[33ma8baa55[m data update
+[33mc805f1c[m running experiments from configs
+[33m736fb9f[m add infeasible count to mpc
+[33m6a2ed72[m clean dead code
+[33mbf87394[m adjust mpc to updated forecast structure with parameters
+[33m6972a80[m smaple diagnostics functions
+[33m022c292[m build shared sample with seed to control reproducibility
+[33mf4e05c8[m minor bug fix and clean
+[33m1d4d37e[m add naive forecast model - average last n weeks
+[33m796ed01[m add buffer data manager to allow forecasts to depend realized demands within the mpc
+[33me278fbc[m cleaning
+[33m19953bf[m eliminate all sources of randomness to have reproducible results mainly add option to pass shared random sample across all experiments for por (not for mpc)
+[33m6a84032[m update the cc temporal relaxation to linear between start end values
+[33m52f99c5[m refactor the data manager class
+[33mfd9b012[m refactor: finalization   - Update DataManager with set_forecast_training_window(), set_uncertainty_training_window()   - Update Forecast to match changes and generate structured forecast
+[33m15964de[m ensure cov are positive definite
+[33mae01c0e[m refactor: decouple Forecast from DataManager, add better special dates handling   - Accept training_data DataFrame directly instead of db object   - Replace hardcoded SpecialDates with holidays library (configurable country)   - Add holiday_country parameter with auto-detection of years from data   - Update MPC to match new Forecast format
+[33mf4f9f1a[m minor bug fix sklearn format for 1d vector
+[33m1a73468[m bug fixes - handle both 1D and 2D sample inputs in get_tank_vol
+[33m3dfbb18[m refactor: decouple uncertainty estimation from optimization models - Add uset_estimator parameter to BaseOptModel, RO, SP - Fit estimator once outside, pass to models - Update MPC to accept pre-fitted estimator
+[33m198a062[m small bug fix in get_tank_vol
+[33m79391c9[m graphs improvements
+[33m1be7572[m improve db visualizations
+[33m61de656[m ensure no missing data in db
+[33mae164a3[m complete a first version of mpc
+[33m94154ea[m minor fix in network tanks
+[33me295ab0[m minor bug fix - apply forecast
+[33m0336ce9[m reorganize optimization models to ensure reformulation with every call from within the mpc
+[33m9d194e0[m minor bug - lp not adopted milp flag
+[33m3b87eb5[m add violated volume calculation to simulation
+[33m670ee06[m minor bug fix - lp did not return same values as other models
+[33mb2a800b[m develop the main mpc loop - not final
+[33m4164543[m cleaning
+[33m1c1c0d7[m more reorganiziation of ro parameters - for mpc use
+[33m7c7889e[m uniform call to formulate and solve across models
+[33m0dccf28[m reorganize mpc, app args and initiate the opt model
+[33mb935a44[m remove lagging features for now to avoid mpc preprocess
+[33mbf86d23[m update the forecasting procedure in the mpc
+[33m3bdc626[m reorganize class for easier user from within the mpc
+[33m2d91cec[m remove lgb for now - there is no easy multi label forecast
+[33m6b94aa5[m change the preprocess to be accessible from outside the class - test data preprocess
+[33m2706c21[m cleaning
+[33m68dd5f7[m update default solvers to gurobi
+[33md4e4673[m initial commit for mpc class
+[33md93ef29[m reorganize the sampling - generalize for different uses
+[33m553e27b[m initial commit for a forecast class
+[33m8fc592b[m fix the milp implementation
+[33m871f25f[m fix an error in the ellipsoid ro model - multiply pumps power by the uncertain part of the prices
+[33m6512233[m add the budget of uncertainty robust model
+[33m270ad58[m improve the documentation of the two maping matrix functions. Each class (RO and SP) has its own mapping
+[33m44142c3[m extract solution only if optimal - avoid errors
+[33me9f3644[m bug fix in base model - vsp assigned columns
+[33m7634634[m move uncertainty properties to base model so they will be accessible to other models
+[33m3652be1[m minor fix - sort data by sate
+[33m7e84e32[m adding sample based cost calculation
+[33m5a04786[m cleaning
+[33m45768b1[m cleaning and documentation
+[33mac0c081[m initial commit for db - a class to hold the entire dataset
+[33m5df70e7[m initial commit for stochastic optimization
+[33mf3288fe[m fix a bug in the mapping matrices
+[33m05b064e[m update the models to have database for uncertainty sets and a forecast as nominal values
+[33me00cbda[m move some function from ro to base model so they will be accessible to other models
+[33m26c2086[m move decision variables and solution extraction to base model for uniformity
+[33m57a5dc6[m fix minor error in tank vol calculation based on nominal values
+[33m0b8e013[m ignore pycharm files
+[33m38b3d3d[m add gitignore
+[33m2af8a98[m add requirements file
+[33m71b020f[m initial commit of the optimization model - basic lp and ro versions
+[33m1cd0196[m add data for an illustrative case study
+[33m72ea843[m Initial commit
