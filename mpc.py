@@ -50,6 +50,10 @@ class MPC:
         self.results = pd.DataFrame()
         self.n_infeasible = 0  # count of iterations where solver failed to find optimal solution
 
+        self.latest_x_fsp = None   # fallback: full-horizon FSP schedule from last successful solve
+        self.latest_x_vsp = None   # fallback: full-horizon VSP schedule from last successful solve
+        self._fallback_offset = 0  # steps consumed from latest solution when consecutive failures occur
+
         self.forecaster = self.prepare_forecaster()
         self.predict_next_horizon()
 
@@ -114,17 +118,29 @@ class MPC:
 
             if status != 'optimal':
                 self.n_infeasible += 1
-                self.current_time = self.current_time + datetime.timedelta(hours=self.wait)
-                self.t_idx += 1
-                continue
+                can_fallback = (self.latest_x_fsp is not None and
+                                self._fallback_offset + self.wait <= self.step_horizon)
+                if not can_fallback:
+                    self.current_time += datetime.timedelta(hours=self.wait)
+                    self.t_idx += 1
+                    continue
+                x_fsp = self.latest_x_fsp[self._fallback_offset:self._fallback_offset + self.wait, :]
+                x_vsp = self.latest_x_vsp[self._fallback_offset:self._fallback_offset + self.wait, :]
+                self._fallback_offset += self.wait
+            else:
+                self.latest_x_fsp = self.opt_model.x_fsp_value.copy()
+                self.latest_x_vsp = self.opt_model.x_vsp_value.copy()
+                self._fallback_offset = self.wait
+                x_fsp = self.opt_model.x_fsp_value[:self.wait, :]
+                x_vsp = self.opt_model.x_vsp_value[:self.wait, :]
 
             step_end = self.current_time + datetime.timedelta(hours=self.wait - 1)
             realization = self.realizations.loc[self.current_time: step_end]
             step_tank_volumes = {}
             for i, (tank_id, tank_data) in enumerate(self.net.tanks.iterrows()):
                 vol = self.net.get_tank_vol(t=self.wait, tank_id=tank_id,
-                                            x_fsp=self.opt_model.x_fsp_value[:self.wait, :],
-                                            x_vsp=self.opt_model.x_vsp_value[:self.wait, :],
+                                            x_fsp=x_fsp,
+                                            x_vsp=x_vsp,
                                             sample=realization.iloc[:self.wait, 1 + i].values)
 
                 self.net.tanks.loc[tank_id, "init_vol"] = vol[-1]
@@ -133,8 +149,8 @@ class MPC:
             # record results
             df = pd.DataFrame({
                 **{"idx": np.repeat(self.t_idx, self.wait), "time": realization.index},
-                **{f"x_fsp_{i}": self.opt_model.x_fsp_value[:self.wait, i] for i in range(self.net.n_fsp)},
-                **{f"x_vsp_{i}": self.opt_model.x_vsp_value[:self.wait, i] for i in range(self.net.n_vsp)},
+                **{f"x_fsp_{i}": x_fsp[:, i] for i in range(self.net.n_fsp)},
+                **{f"x_vsp_{i}": x_vsp[:, i] for i in range(self.net.n_vsp)},
                 **{f"predicted_tariff": self.last_forecast.loc[realization.index, 'tariff'].values[:self.wait]},
                 **{f"realized_tariff": realization['tariff'].values[:self.wait]},
                 **{f"predicted_demand_{tank_id}":
