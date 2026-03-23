@@ -3,28 +3,18 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import sklearn.metrics
-
 import data_manager
 import forecast
 import graphs
 import uncertainty_utils
 import config as cfg
+import por_statistical_analysis as psa
 from network import LPNetwork
 from opt import BaseOptModel, RO, SP, Simulation
 from mpc import MPC
 
 from typing import Dict, List, Any, Optional
 from itertools import product
-
-COLORS = ["#105A7F", "#229FBF", "#FFC533", "#f21c1c"]
-DEFAULT_GROUP_STYLES = [
-    {'color': '#105A7F', 'marker': 'o', 'alpha': 1.0},
-    {'color': '#229FBF', 'marker': 's', 'alpha': 1.0},
-    {'color': '#FFC533', 'marker': '^', 'alpha': 1.0},
-    {'color': '#f21c1c', 'marker': 'D', 'alpha': 1.0},
-    {'color': '#7B2D8E', 'marker': 'v', 'alpha': 1.0},
-    {'color': '#2D8E5E', 'marker': 'P', 'alpha': 1.0},
-]
 
 
 def train_forecaster(training_data, prices_col, demand_cols, model_name='xgb', holiday_country='HU',
@@ -133,7 +123,7 @@ def run_single_model(model_class, model_params, sim_n, nominal_cost=None, sample
 
 
 def por(uset_data, forecast, methods, net_path, group_styles=None, t=24, n=500, milp=False, plot=True,
-        sampling_method='normal', seed=42):
+        sampling_method='normal', seed=42, omega_to_alpha='gaussian', stat_analyze=True):
     """
     Price of Robustness (POR) comparison across multiple optimization methods.
     """
@@ -192,163 +182,21 @@ def por(uset_data, forecast, methods, net_path, group_styles=None, t=24, n=500, 
 
     df = pd.DataFrame(results)
 
+    sp_theoretical_data = None
+    if stat_analyze:
+        sp_methods = [m for m in methods if cfg.get_model_class(m['opt_method']) == SP]
+        if sp_methods:
+            first_sp_params = {**common_params, **sp_methods[0].get('params', {}), 'sample': shared_sample}
+            sp_ref = SP(**first_sp_params)
+            sp_ref.formulate()
+            sp_theoretical_data = {'shared_sample': shared_sample, 'mu': mu,
+                                   'delta': sp_ref.delta, 'sigma_rhs': sp_ref.sigma_rhs, 't': t}
+
     if plot and len(df) > 0:
-        plot_por_results(df, group_styles)
+        psa.plot_por_results(df, group_styles, sp_theoretical_data=sp_theoretical_data,
+                             omega_to_alpha=omega_to_alpha, stat_analyze=stat_analyze)
 
     return df
-
-
-def plot_por_results(df, group_styles=None):
-    plot_configs = [
-        ('avg_cost', 'reliability', 'Average Cost (€)', 'Constraints Satisfaction (%)'),
-        ('avg_cost', 'violated_vol', 'Average Cost (€)', 'Violated Volume ($m^3$)'),
-        ('por', 'reliability', 'Price of Robustness', 'Constraints Satisfaction (%)'),
-        ('objective', 'reliability', 'Solver Objective (€)', 'Constraints Satisfaction (%)'),
-    ]
-
-    # Build styles for each group
-    groups = df['group'].unique()
-    styles = {}
-    for i, group in enumerate(groups):
-        if group_styles and group in group_styles:
-            styles[group] = group_styles[group]
-        else:
-            # Auto-assign from defaults
-            default = DEFAULT_GROUP_STYLES[i % len(DEFAULT_GROUP_STYLES)]
-            styles[group] = default.copy()
-
-    figures = []
-    for x_col, y_col, xlabel, ylabel in plot_configs:
-        if x_col not in df.columns or y_col not in df.columns:
-            continue
-
-        fig, ax = plt.subplots()
-
-        for group in groups:
-            group_df = df[df['group'] == group].sort_values(by=x_col)
-            style = styles[group]
-
-            x_vals = group_df[x_col].values
-            y_vals = group_df[y_col].values
-            if y_col == 'reliability':
-                y_vals = y_vals * 100
-
-            ax.plot(x_vals, y_vals, color=style['color'], marker=style['marker'], alpha=style['alpha'],
-                    label=group, linewidth=2, markersize=8, mfc="white")
-
-        ax.set_xlabel(xlabel)
-        ax.set_ylabel(ylabel)
-        ax.grid(True, alpha=0.3)
-        ax.legend()
-        fig.tight_layout()
-        figures.append(fig)
-
-    # Add theoretical guarantees figure
-    fig_theory = _plot_theoretical_guarantees(df, styles)
-    if fig_theory is not None:
-        figures.append(fig_theory)
-
-    return figures
-
-
-def _plot_theoretical_guarantees(df, styles):
-    """
-    Plot empirical reliability vs theoretical guarantees.
-
-    Creates two side-by-side subplots:
-    - Left: RO methods with omega on x-axis
-    - Right: SP methods with alpha on x-axis
-    Y-axis shows reliability (constraint satisfaction rate).
-
-    Theoretical bounds:
-    - RO (ellipsoid): P(violation) <= exp(-omega^2/2), so reliability >= 1 - exp(-omega^2/2)
-    - SP (chance constraints): reliability >= alpha
-    """
-    # Separate RO and SP results
-    ro_mask = df['omega'].notna()
-    sp_mask = df['alpha'].notna()
-
-    has_ro = ro_mask.any()
-    has_sp = sp_mask.any()
-
-    if not has_ro and not has_sp:
-        return None
-
-    # Determine subplot layout
-    n_plots = int(has_ro) + int(has_sp)
-    fig, axes = plt.subplots(1, n_plots, figsize=(6 * n_plots, 5))
-    if n_plots == 1:
-        axes = [axes]
-
-    ax_idx = 0
-
-    # Plot RO results
-    if has_ro:
-        ax = axes[ax_idx]
-        ax_idx += 1
-
-        ro_groups = df[ro_mask]['group'].unique()
-        for group in ro_groups:
-            group_df = df[(df['group'] == group) & ro_mask].sort_values(by='omega')
-            style = styles.get(group, {'color': 'blue', 'marker': 'o', 'alpha': 1.0})
-
-            omega_vals = group_df['omega'].values
-            reliability_vals = group_df['reliability'].values * 100
-
-            ax.plot(omega_vals, reliability_vals, color=style['color'], marker=style['marker'],
-                    alpha=style['alpha'], label=group, linewidth=2, markersize=8, mfc="white")
-
-        # Theoretical bound for RO: reliability >= 1 - exp(-omega^2/2)
-        omega_range = np.linspace(0, df[ro_mask]['omega'].max() * 1.1, 100)
-        theoretical_ro = (1 - np.exp(-omega_range ** 2 / 2)) * 100
-        ax.plot(omega_range, theoretical_ro, color='grey', linewidth=1.5,
-                label='Bound: $1 - e^{-\\Omega^2/2}$')
-
-        ax.set_xlabel('$\\Omega$ (Ellipsoid Radius)')
-        ax.set_ylabel('Constraint Satisfaction (%)')
-        ax.set_ylim(0, 105)
-        ax.grid(True, alpha=0.3)
-        ax.legend(loc='lower right')
-        ax.set_title('Robust Optimization')
-
-    # Plot SP results
-    if has_sp:
-        ax = axes[ax_idx]
-
-        sp_groups = df[sp_mask]['group'].unique()
-        for group in sp_groups:
-            group_df = df[(df['group'] == group) & sp_mask].copy()
-
-            # Extract alpha_end from the alpha tuple/list
-            group_df['alpha_'] = group_df['alpha'].apply(
-                lambda x: x[0] if isinstance(x, (list, tuple)) else x  # <-- choose if alpha_start (0) or alpha_end (1)
-            )
-            group_df = group_df.sort_values(by='alpha_')
-
-            style = styles.get(group, {'color': 'orange', 'marker': 's', 'alpha': 1.0})
-
-            alpha_vals = group_df['alpha_'].values
-            reliability_vals = group_df['reliability'].values * 100
-
-            ax.plot(alpha_vals, reliability_vals, color=style['color'], marker=style['marker'],
-                    alpha=style['alpha'], label=group, linewidth=2, markersize=8, mfc="white")
-
-        # Theoretical bound for SP: reliability >= alpha (x=y line)
-        alpha_min = df[sp_mask]['alpha'].apply(lambda x: x[1] if isinstance(x, (list, tuple)) else x).min()
-        alpha_max = df[sp_mask]['alpha'].apply(lambda x: x[1] if isinstance(x, (list, tuple)) else x).max()
-        alpha_range = np.linspace(alpha_min * 0.95, min(alpha_max * 1.05, 1.0), 100)
-        theoretical_sp = alpha_range * 100
-        ax.plot(alpha_range, theoretical_sp, color='grey', linewidth=1.5, label='Bound: $\\alpha$')
-
-        ax.set_xlabel('$\\alpha$ (CC Confidence Level)')
-        ax.set_ylabel('Constraint Satisfaction (%)')
-        ax.set_ylim(0, 105)
-        ax.grid(True, alpha=0.3)
-        ax.legend(loc='lower right')
-        ax.set_title('Stochastic Programming')
-
-    fig.tight_layout()
-    return fig
 
 
 def run_static_optimization(model_class, forecast, uset_estimator, net_path='data/multi_tank',
@@ -665,7 +513,9 @@ def _run_por_from_config(config, dm, forecaster, uset_estimator):
         t=opts.get('t', 24),
         n=exp.get('simulation', {}).get('n_samples', 500),
         milp=opts.get('milp', True),
-        plot=opts.get('plot', True)
+        plot=opts.get('plot', True),
+        omega_to_alpha=opts.get('omega_to_alpha', 'gaussian'),
+        stat_analyze=opts.get('stat_analyze', True),
     )
 
 

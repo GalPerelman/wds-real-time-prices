@@ -79,3 +79,5 @@ experiment:
     milp: true
     plot: true
     t: 24
+    omega_to_alpha: subgaussian   # subgaussian or gaussian
+    stat_analyze: true

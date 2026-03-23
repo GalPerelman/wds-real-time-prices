@@ -584,6 +584,8 @@ class SP(BaseOptModel):
 
         self.sampler = None
         self.sample = None
+        self.delta = None
+        self.sigma_rhs = None
 
     def update_sampler(self):
         """
@@ -706,6 +708,8 @@ class SP(BaseOptModel):
 
         var_rhs = delta_full @ self.sigma[self.t:, self.t:] @ delta_full.T  # remove prices from sigma, shape (2m, 2m)
         sigma_rhs = np.sqrt(np.diag(var_rhs))  # shape (2m,)
+        self.delta = delta          # (m, n_tanks*t) cumulative demand mapping
+        self.sigma_rhs = sigma_rhs[:m]  # (m,) std of cumulative demand per constraint
 
         time_idx = np.tile(np.arange(self.t), self.n_tanks * 2)  # shape (2m,)
 
