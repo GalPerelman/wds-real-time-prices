@@ -95,7 +95,8 @@ class EPANETSimulator:
             self.d.setNodeTankMinimumWaterLevel(idx, max(0.0, real_min_level - self.min_vol_margin_m))
             self.d.setNodeTankMaximumWaterLevel(idx, real_max_level + self.MAX_VOL_MARGIN_M)
 
-        # Open hydraulic analysis
+        # Set simulation duration to cover the full realization horizon, then open hydraulic analysis
+        self.d.setTimeSimulationDuration(len(realizations) * 3600)
         self.d.openHydraulicAnalysis()
         self.d.initializeHydraulicAnalysis()
         self._elapsed_h = 0.0
