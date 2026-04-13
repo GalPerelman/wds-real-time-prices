@@ -29,10 +29,17 @@ class DataManager:
 
     def load_data(self, start_date=None, end_date=None):
         demands = pd.read_csv(self.demands_data_path, index_col=0)
-        tariffs = pd.read_csv(self.tariffs_data_path, index_col=0)[["tariff"]]
+        tariffs = pd.read_csv(self.tariffs_data_path, index_col=0)[[self.tariff_col]]
 
-        tariffs.index = pd.to_datetime(tariffs.index, utc=True)
-        demands.index = pd.to_datetime(demands.index, utc=True)
+        # Validate tz-awareness on raw strings before conversion (utc=True would silently accept tz-naive)
+        if pd.to_datetime(tariffs.index[0]).tzinfo is None:
+            raise ValueError(f"Timestamps in {self.tariffs_data_path} are tz-naive; tz-aware timestamps required.")
+        if pd.to_datetime(demands.index[0]).tzinfo is None:
+            raise ValueError(f"Timestamps in {self.demands_data_path} are tz-naive; tz-aware timestamps required.")
+
+        # Convert to UTC and strip timezone: tz-naive UTC index, DST resolved by the conversion.
+        tariffs.index = pd.to_datetime(tariffs.index, utc=True).tz_convert(None)
+        demands.index = pd.to_datetime(demands.index, utc=True).tz_convert(None)
 
         if start_date is not None:
             tariffs = tariffs.loc[tariffs.index >= start_date]
@@ -47,7 +54,6 @@ class DataManager:
         self.demands = demands.loc[common_index].sort_index()
 
         elec_demand_data = pd.concat([self.tariffs, self.demands], axis=1)
-        elec_demand_data.index = pd.to_datetime(elec_demand_data.index, dayfirst=True)
         self.data = elec_demand_data
 
         # Make sure no missing data in the tariff data set

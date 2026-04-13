@@ -1,4 +1,3 @@
-import datetime
 
 import matplotlib.pyplot as plt
 import pandas as pd
@@ -108,11 +107,13 @@ class MPC:
         if self.simulator is not None:
             self.simulator.initialize(self.realizations)
 
+        _start_iloc = self.realizations.index.searchsorted(self.current_time)
         for t in range(self.experiment_horizon // self.wait):
+            step_iloc = _start_iloc + t * self.wait
+            self.current_time = self.realizations.index[step_iloc]
+
             if self.buffer.should_update(self.current_time):
-                yesterday_end = self.current_time - pd.Timedelta(hours=1)
-                yesterday_start = self.current_time - pd.Timedelta(hours=24)
-                prev_day = self.realizations.loc[yesterday_start:yesterday_end]
+                prev_day = self.realizations.iloc[max(0, step_iloc - 24): step_iloc]
                 if not prev_day.empty:
                     self.buffer.update(prev_day)
 
@@ -127,7 +128,6 @@ class MPC:
                 can_fallback = (self.latest_x_fsp is not None and
                                 self._fallback_offset + self.wait <= self.step_horizon)
                 if not can_fallback:
-                    self.current_time += datetime.timedelta(hours=self.wait)
                     self.t_idx += 1
                     continue
                 x_fsp = self.latest_x_fsp[self._fallback_offset:self._fallback_offset + self.wait, :]
@@ -140,9 +140,7 @@ class MPC:
                 x_fsp = self.opt_model.x_fsp_value[:self.wait, :]
                 x_vsp = self.opt_model.x_vsp_value[:self.wait, :]
 
-            step_end = self.current_time + datetime.timedelta(hours=self.wait - 1)
-            realization = self.realizations.loc[self.current_time: step_end]
-            step_tank_volumes = {}
+            realization = self.realizations.iloc[step_iloc: step_iloc + self.wait]
 
             # Optimizer-predicted tank volumes (always computed)
             opt_tank_volumes = {}
@@ -228,7 +226,6 @@ class MPC:
                 if epanet_n_viol is not None else {}
             ),
         })
-            self.current_time = self.current_time + datetime.timedelta(hours=self.wait)
 
     def plot_results(self):
         fig, axes = plt.subplots(nrows=self.net.n_tanks + 1, sharex=True)

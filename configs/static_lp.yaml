@@ -2,9 +2,10 @@
 # Run a single RO optimization with Monte Carlo simulation
 
 data:
+  # data files need to have a datetime index column with time zone aware format
   network_path: "data/multi_tank"
-  demands_path: "data/multi_tank/demands2022.csv"
-  tariffs_path: "data/multi_tank/tariffs2022.csv"
+  demands_path: "data/multi_tank/demands.csv"
+  tariffs_path: "data/multi_tank/tariffs.csv"
 
 columns:
   prices_col: "tariff"

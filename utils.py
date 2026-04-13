@@ -37,6 +37,6 @@ def normalize_datetime(dt, target_tz='UTC'):
         # If naive, assume UTC and make aware
         dt = dt.replace(tzinfo=pytz.UTC)
 
-    # Convert to target timezone
+    # Convert to target timezone and strip tz info: caller works with tz-naive UTC
     target = pytz.timezone(target_tz)
-    return dt.astimezone(target)
+    return dt.astimezone(target).replace(tzinfo=None)
