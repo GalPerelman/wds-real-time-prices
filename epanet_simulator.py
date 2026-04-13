@@ -7,7 +7,9 @@ import graphs
 
 
 class EPANETSimulator:
-    def __init__(self, network, inp_file, prices_col, demand_cols):
+    MAX_VOL_MARGIN_M = 5.0  # fixed upper margin (m); large enough to never limit max violation observation
+
+    def __init__(self, network, inp_file, prices_col, demand_cols, min_vol_margin_m=1.0):
         self.tanks = network.tanks
         self.fsp = network.fsp
         self.prices_col = prices_col
@@ -38,6 +40,7 @@ class EPANETSimulator:
             index=self.demand_mapping.index
         )
 
+        self.min_vol_margin_m = min_vol_margin_m
         self._is_open = False
         self._elapsed_h = 0.0
         self._recorded_schedule = pd.DataFrame(columns=self.fsp.index)
@@ -74,7 +77,10 @@ class EPANETSimulator:
             self.d.setNodeDemandPatternIndex(self.mapped_junc_idx[i], 1, pat_idx)
             self.d.setNodeBaseDemands([self.mapped_junc_idx[i]], [1.0])
 
-        # Set tank levels (initial, min, max) from LP volumes in self.tanks
+        # Set tank levels (initial, min, max) from LP volumes in self.tanks.
+        # base_levels: EPANET minimum water level elevation (m) per tank - datum for level conversion.
+        # base_vols: EPANET volume at minimum water level (m^3) per tank - datum for volume conversion.
+        # Conversion: level = (vol - base_vol) / area + base_level
         epanet_tank_indices = self.tank_epanet_idx.tolist()
         base_levels = self.d.getNodeTankMinimumWaterLevel(epanet_tank_indices)
         base_vols = self.d.getNodeTankMinimumWaterVolume(epanet_tank_indices)
@@ -82,9 +88,12 @@ class EPANETSimulator:
         for i, tank_id in enumerate(self.tanks.index):
             area = np.pi * (diameters[i] / 2) ** 2
             idx = self.tank_epanet_idx[tank_id]
-            self.d.setNodeTankInitialLevel(idx, (self.tanks.loc[tank_id, 'init_vol'] - base_vols[i]) / area + base_levels[i])
-            self.d.setNodeTankMinimumWaterLevel(idx, (self.tanks.loc[tank_id, 'min_vol'] - base_vols[i]) / area + base_levels[i])
-            self.d.setNodeTankMaximumWaterLevel(idx, (self.tanks.loc[tank_id, 'max_vol'] - base_vols[i]) / area + base_levels[i])
+            real_min_level = (self.tanks.loc[tank_id, 'min_vol'] - base_vols[i]) / area + base_levels[i]
+            real_max_level = (self.tanks.loc[tank_id, 'max_vol'] - base_vols[i]) / area + base_levels[i]
+            init_vol = (self.tanks.loc[tank_id, 'init_vol'] - base_vols[i]) / area + base_levels[i]
+            self.d.setNodeTankInitialLevel(idx, init_vol)
+            self.d.setNodeTankMinimumWaterLevel(idx, max(0.0, real_min_level - self.min_vol_margin_m))
+            self.d.setNodeTankMaximumWaterLevel(idx, real_max_level + self.MAX_VOL_MARGIN_M)
 
         # Open hydraulic analysis
         self.d.openHydraulicAnalysis()

@@ -14,7 +14,7 @@ import forecast
 class MPC:
     def __init__(self, net_path, opt_method, db, uset_estimator, start_datetime, step_horizon, wait, experiment_horizon,
                  realizations, prices_col, demand_cols, forecast_method="xgb", forecast_params=None,
-                 milp=True, holiday_country='HU', **kwargs):
+                 milp=True, holiday_country='HU', simulator=None, **kwargs):
         self.net_path = net_path
         self.opt_method = opt_method
         self.db = db
@@ -50,8 +50,10 @@ class MPC:
         self.results = pd.DataFrame()
         self.n_infeasible = 0  # count of iterations where solver failed to find optimal solution
 
-        self.latest_x_fsp = None   # fallback: full-horizon FSP schedule from last successful solve
-        self.latest_x_vsp = None   # fallback: full-horizon VSP schedule from last successful solve
+        self.simulator = simulator
+
+        self.latest_x_fsp = None  # fallback: full-horizon FSP schedule from last successful solve
+        self.latest_x_vsp = None  # fallback: full-horizon VSP schedule from last successful solve
         self._fallback_offset = 0  # steps consumed from latest solution when consecutive failures occur
 
         self.forecaster = self.prepare_forecaster()
@@ -91,7 +93,8 @@ class MPC:
     def preprocess_next_horizon(self):
         next_horizon_end = self.current_time + pd.to_timedelta(f'{self.step_horizon}h')
         next_horizon = pd.DataFrame(index=pd.date_range(start=self.current_time, end=next_horizon_end, freq="h"))
-        next_horizon_data = forecast.Forecast.construct_datetime_features(next_horizon, holiday_country=self.holiday_country)
+        next_horizon_data = forecast.Forecast.construct_datetime_features(next_horizon,
+                                                                          holiday_country=self.holiday_country)
         return next_horizon_data
 
     def predict_next_horizon(self):
@@ -102,6 +105,9 @@ class MPC:
                                           columns=[self.forecaster.prices_col] + self.forecaster.demand_cols)
 
     def run(self):
+        if self.simulator is not None:
+            self.simulator.initialize(self.realizations)
+
         for t in range(self.experiment_horizon // self.wait):
             if self.buffer.should_update(self.current_time):
                 yesterday_end = self.current_time - pd.Timedelta(hours=1)
@@ -137,40 +143,99 @@ class MPC:
             step_end = self.current_time + datetime.timedelta(hours=self.wait - 1)
             realization = self.realizations.loc[self.current_time: step_end]
             step_tank_volumes = {}
+
+            # Optimizer-predicted tank volumes (always computed)
+            opt_tank_volumes = {}
             for i, (tank_id, tank_data) in enumerate(self.net.tanks.iterrows()):
                 vol = self.net.get_tank_vol(t=self.wait, tank_id=tank_id,
-                                            x_fsp=x_fsp,
-                                            x_vsp=x_vsp,
+                                            x_fsp=x_fsp, x_vsp=x_vsp,
                                             sample=realization.iloc[:self.wait, 1 + i].values)
+                opt_tank_volumes[tank_id] = vol
 
-                self.net.tanks.loc[tank_id, "init_vol"] = vol[-1]
-                step_tank_volumes[tank_id] = vol
+            # EPANET true volumes (when simulator present); also updates init_vol for next step
+            if self.simulator is not None:
+                x_fsp_df = pd.DataFrame(x_fsp, columns=self.net.fsp.index)
+                epanet_volumes, epanet_energy = self.simulator.step(x_fsp_df, self.wait)
+                for tank_id, tank_data in self.net.tanks.iterrows():
+                    true_vol = epanet_volumes.iloc[-1][tank_id]
+                    # Min violations propagate: optimizer sees the true depleted state and must recover.
+                    # Max violations clamp to max_vol: spills reset to the feasible ceiling.
+                    self.net.tanks.loc[tank_id, 'init_vol'] = min(true_vol, tank_data['max_vol'])
+            else:
+                epanet_volumes = None
+                epanet_energy = None
+                for tank_id in self.net.tanks.index:
+                    self.net.tanks.loc[tank_id, 'init_vol'] = opt_tank_volumes[tank_id][-1]
 
-            # record results
-            df = pd.DataFrame({
-                **{"idx": np.repeat(self.t_idx, self.wait), "time": realization.index},
-                **{f"x_fsp_{i}": x_fsp[:, i] for i in range(self.net.n_fsp)},
-                **{f"x_vsp_{i}": x_vsp[:, i] for i in range(self.net.n_vsp)},
-                **{f"predicted_tariff": self.last_forecast.loc[realization.index, 'tariff'].values[:self.wait]},
-                **{f"realized_tariff": realization['tariff'].values[:self.wait]},
-                **{f"predicted_demand_{tank_id}":
-                       self.last_forecast.loc[realization.index, tank_data["demand"]].values[:self.wait]
-                   for tank_id, tank_data in self.net.tanks.iterrows()},
-                **{f"realized_demand_{tank_id}": realization.loc[:, tank_data["demand"]].values[:self.wait] for
-                   tank_id, tank_data in
-                   self.net.tanks.iterrows()},
-                **{f"vol_tank_{tank_id}": step_tank_volumes[tank_id].flatten() for tank_id in self.net.tanks.index}
-            },
-            )
-
+            df = self._record_step(realization, x_fsp, x_vsp, opt_tank_volumes, epanet_volumes, epanet_energy)
             self.results = pd.concat([self.results, df], ignore_index=True)
             self.t_idx += 1
+
+        if self.simulator is not None:
+            self.simulator.close()
+
+    def _compute_violations(self, tank_volumes_dict):
+        n_viol = np.zeros(self.wait, dtype=int)
+        viol_vol = np.zeros(self.wait)
+        for tank_id, tank_data in self.net.tanks.iterrows():
+            vol = tank_volumes_dict[tank_id]
+            vol = vol.values if hasattr(vol, 'values') else vol.flatten()
+            n_viol += (vol < tank_data['min_vol']).astype(int) + (vol > tank_data['max_vol']).astype(int)
+            viol_vol += np.maximum(0.0, tank_data['min_vol'] - vol) + np.maximum(0.0, vol - tank_data['max_vol'])
+        return n_viol, viol_vol
+
+    def _record_step(self, realization, x_fsp, x_vsp, opt_tank_volumes, epanet_volumes, epanet_energy):
+        opt_n_viol, opt_viol_vol = self._compute_violations(opt_tank_volumes)
+        epanet_n_viol, epanet_viol_vol = (
+            self._compute_violations({tid: epanet_volumes[tid] for tid in self.net.tanks.index})
+            if epanet_volumes is not None else (None, None)
+        )
+        return pd.DataFrame({
+            "idx": np.repeat(self.t_idx, self.wait),
+            "time": realization.index,
+            **{f"x_fsp_{i}": x_fsp[:, i] for i in range(self.net.n_fsp)},
+            **{f"x_vsp_{i}": x_vsp[:, i] for i in range(self.net.n_vsp)},
+            "predicted_tariff": self.last_forecast.loc[realization.index, 'tariff'].values[:self.wait],
+            "realized_tariff": realization['tariff'].values[:self.wait],
+            **{f"predicted_demand_{tank_id}":
+                   self.last_forecast.loc[realization.index, tank_data["demand"]].values[:self.wait]
+               for tank_id, tank_data in self.net.tanks.iterrows()},
+            **{f"realized_demand_{tank_id}": realization.loc[:, tank_data["demand"]].values[:self.wait]
+               for tank_id, tank_data in self.net.tanks.iterrows()},
+            **{f"opt_vol_tank_{tank_id}": opt_tank_volumes[tank_id].flatten()
+               for tank_id in self.net.tanks.index},
+            **{f"opt_energy_{combo}": x_fsp[:, i] * self.net.fsp.loc[combo, 'power']
+               for i, combo in enumerate(self.net.fsp.index)},
+            "opt_n_violations": opt_n_viol,
+            "opt_violated_vol": opt_viol_vol,
+            **(
+                {f"epanet_vol_tank_{tank_id}": epanet_volumes[tank_id].values
+                 for tank_id in self.net.tanks.index}
+                if epanet_volumes is not None else {}
+            ),
+            **(
+                {f"epanet_energy_{pump_id}": epanet_energy[pump_id].values
+                 for pump_id in epanet_energy.columns}
+                if epanet_energy is not None else {}
+            ),
+            **(
+                {"epanet_cost": (epanet_energy.values *
+                                 realization['tariff'].values[:self.wait, np.newaxis] / 1000).sum(axis=1)}
+                if epanet_energy is not None else {}
+            ),
+            **(
+                {"epanet_n_violations": epanet_n_viol, "epanet_violated_vol": epanet_viol_vol}
+                if epanet_n_viol is not None else {}
+            ),
+        })
             self.current_time = self.current_time + datetime.timedelta(hours=self.wait)
 
     def plot_results(self):
         fig, axes = plt.subplots(nrows=self.net.n_tanks + 1, sharex=True)
         for i, tank_id in enumerate(self.net.tanks.index):
-            axes[i].plot(self.results[f"vol_tank_{tank_id}"], label=f"vol_tank_{tank_id}")
+            epanet_col = f"epanet_vol_tank_{tank_id}"
+            vol_col = epanet_col if epanet_col in self.results.columns else f"opt_vol_tank_{tank_id}"
+            axes[i].plot(self.results[vol_col], label=vol_col)
             axes[i].axhline(self.net.tanks.loc[tank_id, 'min_vol'], color='red', label='Min Volume' if i == 0 else "")
             axes[i].axhline(self.net.tanks.loc[tank_id, 'max_vol'], color='red', label='Max Volume' if i == 0 else "")
             axes[i].set_ylabel(f'Tank {tank_id}\nVolume\n($m^3$)')

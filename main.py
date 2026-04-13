@@ -12,6 +12,7 @@ import por_statistical_analysis as psa
 from network import LPNetwork
 from opt import BaseOptModel, RO, SP, Simulation
 from mpc import MPC
+from epanet_simulator import EPANETSimulator
 
 from typing import Dict, List, Any, Optional
 from itertools import product
@@ -234,7 +235,7 @@ def run_static_optimization(model_class, forecast, uset_estimator, net_path='dat
 def run_mpc_experiment(dm, uset_estimator, realizations, prices_col, demand_cols, opt_method='ro',
                        start_datetime=None, step_horizon=24, wait=1, experiment_horizon=48,
                        forecast_method='xgb', forecast_params=None, net_path='data/multi_tank',
-                       milp=True, plot=True, holiday_country='HU', **opt_params):
+                       milp=True, plot=True, holiday_country='HU', simulator=None, **opt_params):
     """
     Run an MPC rolling horizon experiment.
 
@@ -261,7 +262,7 @@ def run_mpc_experiment(dm, uset_estimator, realizations, prices_col, demand_cols
               experiment_horizon=experiment_horizon, realizations=realizations,
               prices_col=prices_col, demand_cols=demand_cols,
               forecast_method=forecast_method, forecast_params=forecast_params,
-              milp=milp, holiday_country=holiday_country,
+              milp=milp, holiday_country=holiday_country, simulator=simulator,
               **opt_params)
     mpc.init_opt_model()
     mpc.run()
@@ -297,15 +298,11 @@ def _compute_mpc_metrics(mpc):
     actual_cost    = float((results['realized_tariff'].values  * total_fsp_power).sum())
     predicted_cost = float((results['predicted_tariff'].values * total_fsp_power).sum())
 
-    # Constraint violations
-    n_violations = 0
-    violated_vol = 0.0
-    for tank_id, tank_data in net.tanks.iterrows():
-        vol = results[f'vol_tank_{tank_id}'].values
-        underflow = np.maximum(0.0, tank_data['min_vol'] - vol)
-        overflow = np.maximum(0.0, vol - tank_data['max_vol'])
-        n_violations += int((underflow > 0).sum() + (overflow > 0).sum())
-        violated_vol += float(underflow.sum() + overflow.sum())
+    # Constraint violations — summed from per-step columns computed in MPC._record_step
+    viol_col = 'epanet_n_violations' if 'epanet_n_violations' in results.columns else 'opt_n_violations'
+    vvol_col = 'epanet_violated_vol' if 'epanet_violated_vol' in results.columns else 'opt_violated_vol'
+    n_violations = int(results[viol_col].sum())
+    violated_vol = float(results[vvol_col].sum())
     constraint_satisfaction_rate = 1.0 - n_violations / (n_steps * net.n_tanks)
 
     # Forecast MAE over implemented steps
@@ -354,6 +351,8 @@ def _run_mpc_sweep_from_config(config, dm, uset_estimator):
 
     export_path = opts.get('export_path', None)
 
+    sim_cfg = opts.get('simulator')
+
     methods = cfg.expand_methods(exp.methods)
     rows = []
     trajectory_parts = []
@@ -362,10 +361,22 @@ def _run_mpc_sweep_from_config(config, dm, uset_estimator):
         opt_method = method['opt_method']
         params = method.get('params', {})
 
-        print(f"  [{label}] running...")
-        mpc = run_mpc_experiment(opt_method=opt_method, **common_kwargs, **params)
+        simulator = None
+        if sim_cfg:
+            sim_net = LPNetwork(config.data.network_path)
+            simulator = EPANETSimulator(
+                network=sim_net,
+                inp_file=sim_cfg['inp_file'],
+                prices_col=config.columns.prices_col,
+                demand_cols=config.columns.demand_cols,
+                min_vol_margin_m=sim_cfg['min_vol_margin_m'],
+            )
 
-        rows.append({'label': label, 'opt_method': opt_method, **params, **_compute_mpc_metrics(mpc)})
+        print(f"  [{label}] running...")
+        group = method.get('group', label)
+        mpc = run_mpc_experiment(opt_method=opt_method, simulator=simulator, **common_kwargs, **params)
+        mpc_metrics = _compute_mpc_metrics(mpc)
+        rows.append({'label': label, 'group': group, 'opt_method': opt_method, **params, **mpc_metrics})
 
         if export_path is not None:
             traj = mpc.results.copy()
@@ -524,6 +535,18 @@ def _run_mpc_from_config(config, dm, uset_estimator):
     exp = config.experiment
     mpc_cfg = exp.mpc
     opts = exp.get('options', {})
+
+    sim_cfg = opts.get('simulator')
+    simulator = None
+    if sim_cfg:
+        sim_net = LPNetwork(config.data.network_path)
+        simulator = EPANETSimulator(
+            network=sim_net,
+            inp_file=sim_cfg['inp_file'],
+            prices_col=config.columns.prices_col,
+            demand_cols=config.columns.demand_cols,
+            min_vol_margin_m=sim_cfg['min_vol_margin_m'],
+        )
 
     return run_mpc_experiment(
         dm=dm,

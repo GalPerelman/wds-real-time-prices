@@ -72,3 +72,6 @@ experiment:
     milp: true
     plot: false
     export_path: "mpc_october"  # optional: save all trajectories with a 'label' column
+    simulator:
+      inp_file: "data/multi_tank/multi_tank.inp"
+      min_vol_margin_m: 1.0  # relaxed EPANET min bounds (m); must be < real_min_level for all tanks
