@@ -207,3 +207,56 @@ class EPANETSimulator:
                 if any(p in line for p in _V23_PATTERNS):
                     continue
                 f.write(line)
+
+
+if __name__ == '__main__':
+    # Example usage
+    import data_manager
+    from network import LPNetwork
+    from opt import BaseOptModel
+
+    DATA_DIR = 'data/multi_tank'
+    T = 24
+    net = LPNetwork(DATA_DIR)
+
+    dm = data_manager.DataManager(f'{DATA_DIR}/demands.csv', f'{DATA_DIR}/tariffs.csv')
+    dm.load_data()
+    realizations = dm.data.iloc[:T]
+
+    # Solve LP using the first 24h realizations as forecast
+    lp = BaseOptModel(network=net, t=T, forecast=realizations, milp=True)
+    lp.formulate()
+    status, cost = lp.solve()
+    print(f'LP status: {status}  cost: {cost:.2f}')
+
+    # Wrap LP solution as DataFrame with FSP combination names as columns
+    x_fsp = pd.DataFrame(lp.x_fsp_value, columns=net.fsp.index)
+
+    # Compute LP predicted tank volumes for comparison
+    lp_volumes = {}
+    for tank_id, tank_data in net.tanks.iterrows():
+        lp_volumes[tank_id] = net.get_tank_vol(
+            t=T, tank_id=tank_id, x_fsp=lp.x_fsp_value, x_vsp=lp.x_vsp_value,
+            sample=realizations[tank_data['demand']].values
+        )
+
+    # Run EPANET simulator with the same LP policy
+    sim = EPANETSimulator(net, f'{DATA_DIR}/multi_tank.inp', prices_col='tariff', demand_cols=['a', 'b', 'c'])
+    sim.initialize(realizations)
+    tank_vols_epanet, energy = sim.step(x_fsp, wait=T)
+
+    # Compare LP vs EPANET final tank volumes
+    print(f'\n{"Tank":<8} {"LP final (m3)":>15} {"EPANET final (m3)":>18}')
+    for tank_id in net.tanks.index:
+        lp_final = lp_volumes[tank_id][-1].item()
+        ep_final = tank_vols_epanet.loc[T - 1, tank_id]
+        print(f'{tank_id:<8} {lp_final:>15.1f} {ep_final:>18.1f}')
+
+    print(f'\nTotal energy per pump (kWh):\n{energy.sum().round(1)}')
+    import matplotlib.pyplot as plt
+    g = graphs.OptGraphs(lp)
+    g.all_tanks()
+
+    sim.export('outputs/sim_export.inp')
+    sim.close()
+    plt.show()
