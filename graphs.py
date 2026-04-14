@@ -13,13 +13,14 @@ class OptGraphs:
         self.t = self.opt_model.t
 
     def tank_volume(self, tank_id, plot_dem=False, plot_tariff=False, sample=None, ax=None):
-        if sample.shape[1] > 1:
+        if sample is not None and sample.shape[1] > 1:
             alpha = 0.1
         else:
             alpha = 1.0
 
         vol = self.opt_model.network.get_tank_vol(t=self.opt_model.t, tank_id=tank_id,
-                                                  x_fsp=self.x_fsp_value, x_vsp=self.x_vsp_value, sample=sample)
+                                                  x_fsp=self.x_fsp_value, x_vsp=self.x_vsp_value, sample=sample,
+                                                  include_init=True)
         if ax is None:
             fig, ax = plt.subplots()
 
@@ -29,15 +30,15 @@ class OptGraphs:
         demands = self.opt_model.network.get_tank_demand(self.opt_model.t, tank_id)
 
         if plot_dem:
-            ax.bar(range(len(demands)), demands, edgecolor='k', zorder=5)
+            ax.bar(range(1, len(demands) + 1), demands, edgecolor='k', zorder=5)
 
         if plot_tariff:
             tariff = self.opt_model.network.tariffs['tariff'].values[:self.opt_model.t]
-            ax.bar(range(len(tariff)), tariff, edgecolor='k', zorder=5)
+            ax.bar(range(1, len(tariff) + 1), tariff, edgecolor='k', zorder=5)
 
-        ax.hlines(tank_data['init_vol'], 0, self.t, colors='k', linestyles='--')
-        ax.hlines(tank_data['min_vol'], 0, self.t, colors='red')
-        ax.hlines(tank_data['max_vol'], 0, self.t, colors='red')
+        ax.hlines(tank_data['init_vol'], 0, self.t + 1, colors='k', linestyles='--')
+        ax.hlines(tank_data['min_vol'], 0, self.t + 1, colors='red')
+        ax.hlines(tank_data['max_vol'], 0, self.t + 1, colors='red')
         ax.grid(zorder=0)
         return ax
 
@@ -53,7 +54,7 @@ class OptGraphs:
         else:
             nrows = self.opt_model.network.n_tanks + j
 
-        fig, axes = plt.subplots(nrows=nrows, ncols=ncols, figsize=(8, 5))
+        fig, axes = plt.subplots(nrows=nrows, ncols=ncols, figsize=(7, 7))
         axes = axes.ravel()
         for i, (tank_id, tank_data) in enumerate(self.opt_model.network.tanks.iterrows()):
             if tank_id == 9:
@@ -73,10 +74,12 @@ class OptGraphs:
             axes[-1].plot(cost_sample, alpha=0.1, c='C0')
             axes[-1].plot(self.opt_model.network.tariffs['tariff'].values[:self.t], c='k')
             axes[-1].grid(zorder=0)
-            axes[-1].bar(range(self.t), self.opt_model.network.tariffs['tariff'].values[:self.t], edgecolor='k', alpha=0.6)
+            # axes[-1].bar(range(self.t), self.opt_model.network.tariffs['tariff'].values[:self.t], edgecolor='k', alpha=0.6)
             axes[-1].set_ylabel('Tariff (€/MWh)')
 
         axes[-1].set_xlabel('Time (Hr)')
+        fig.align_ylabels()
+        fig.subplots_adjust(left=0.12, right=0.95, hspace=0.4, top=0.95, bottom=0.08)
 
 
 def plot_mat(mat, norm=False, t=24):
@@ -136,6 +139,7 @@ def series_hourly_distribution(df: pd.DataFrame, col: str):
 
     fig.align_ylabels()
     fig.subplots_adjust(bottom=0.1, top=0.95, left=0.1, right=0.9, hspace=0.15)
+
 
 class MPCGraphs:
     def __init__(self, trajectories, net):

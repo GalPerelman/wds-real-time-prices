@@ -187,7 +187,7 @@ class LPNetwork:
         tank_consumer_id = self.tanks.loc[tank_id, "demand"]
         return self.demands.iloc[:t].loc[:, tank_consumer_id]
 
-    def get_tank_vol(self, t, tank_id, x_fsp, x_vsp, sample=None):
+    def get_tank_vol(self, t, tank_id, x_fsp, x_vsp, sample=None, include_init=False):
         mat = np.tril(np.ones((t, t)))
         if sample is None:
             tank_consumer_id = self.tanks.loc[tank_id, "demand"]
@@ -198,7 +198,8 @@ class LPNetwork:
             if cumm_tank_consumption.ndim == 1:
                 cumm_tank_consumption = cumm_tank_consumption.reshape(-1, 1)
 
-        lhs = self.tanks.loc[tank_id, "init_vol"]
+        init_vol = self.tanks.loc[tank_id, "init_vol"]
+        lhs = init_vol
         for i, (fsp_name, row_fsp) in enumerate(self.fsp.iterrows()):
             if row_fsp['in'] == tank_id:
                 lhs += row_fsp['flow'] * mat @ x_fsp[:, i]
@@ -216,6 +217,10 @@ class LPNetwork:
                 continue
 
         vol = lhs.reshape(-1, 1) - cumm_tank_consumption
+        if include_init:
+            n_cols = vol.shape[1]
+            init_row = np.full((1, n_cols), init_vol)
+            vol = np.vstack([init_row, vol])
         return vol
 
     @staticmethod
