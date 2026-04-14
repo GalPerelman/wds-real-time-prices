@@ -13,7 +13,7 @@ import forecast
 class MPC:
     def __init__(self, net_path, opt_method, db, uset_estimator, start_datetime, step_horizon, wait, experiment_horizon,
                  realizations, prices_col, demand_cols, forecast_method="xgb", forecast_params=None,
-                 milp=True, holiday_country='HU', simulator=None, **kwargs):
+                 milp=True, holiday_country='HU', simulator=None, final_vol_constraint=True, **kwargs):
         self.net_path = net_path
         self.opt_method = opt_method
         self.db = db
@@ -50,6 +50,7 @@ class MPC:
         self.n_infeasible = 0  # count of iterations where solver failed to find optimal solution
 
         self.simulator = simulator
+        self.final_vol_constraint = final_vol_constraint
 
         self.latest_x_fsp = None  # fallback: full-horizon FSP schedule from last successful solve
         self.latest_x_vsp = None  # fallback: full-horizon VSP schedule from last successful solve
@@ -62,14 +63,16 @@ class MPC:
         self.net = LPNetwork(self.net_path)
         if self.opt_method in ["lp", "pto"]:
             model = BaseOptModel(network=self.net, t=self.step_horizon, forecast=self.last_forecast,
-                                 uset_estimator=self.uset_estimator, milp=self.milp)
+                                 uset_estimator=self.uset_estimator, milp=self.milp,
+                                 final_vol_constraint=self.final_vol_constraint)
         elif self.opt_method in ["ro", "RO"]:
             model = RO(network=self.net, t=self.step_horizon, omega=self.omega, gamma=self.gamma, k=self.k,
                        forecast=self.last_forecast, uset_estimator=self.uset_estimator, milp=self.milp,
-                       uncertainty_set=self.u_set)
+                       uncertainty_set=self.u_set, final_vol_constraint=self.final_vol_constraint)
         elif self.opt_method in ["sp", "SP", "CC", "SAA"]:
             model = SP(network=self.net, t=self.step_horizon, alpha=self.alpha,
-                       forecast=self.last_forecast, uset_estimator=self.uset_estimator, milp=self.milp)
+                       forecast=self.last_forecast, uset_estimator=self.uset_estimator, milp=self.milp,
+                       final_vol_constraint=self.final_vol_constraint)
         else:
             raise ValueError(f"Unknown optimization method: {self.opt_method}")
 

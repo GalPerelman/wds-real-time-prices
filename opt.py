@@ -16,7 +16,8 @@ pd.set_option('display.width', 1000)
 
 
 class BaseOptModel:
-    def __init__(self, network, t, forecast, uset_estimator=None, solver_params=None, solver_display=False, milp=True, **kwargs):
+    def __init__(self, network, t, forecast, uset_estimator=None, solver_params=None, solver_display=False, milp=True,
+                 final_vol_constraint=True, **kwargs):
         self.network = network
         self.t = t
         self.forecast = forecast  # should be a pandas dataframe, first column prices, rest demands
@@ -24,6 +25,7 @@ class BaseOptModel:
         self.solver_params = solver_params
         self.solver_display = solver_display
         self.milp = milp
+        self.final_vol_constraint = final_vol_constraint
 
         # for matrices dimensions
         self.n_fsp, self.n_vsp, self.n_tanks = self.network.n_fsp, self.network.n_vsp, self.network.n_tanks
@@ -146,7 +148,8 @@ class BaseOptModel:
 
             tanks_lb_rhs = np.tile(tank_data['init_vol'] - tank_data['min_vol'], self.t)
             tanks_lb_rhs = tanks_lb_rhs - tank_demand.values[:self.t].cumsum()
-            tanks_lb_rhs[-1] = tank_data['init_vol'] - tank_data['final_vol'] - tank_demand.values[:self.t].sum()
+            if self.final_vol_constraint:
+                tanks_lb_rhs[-1] = tank_data['init_vol'] - tank_data['final_vol'] - tank_demand.values[:self.t].sum()
             rhs[self.n_tanks * self.t + tank_idx * self.t:
                 self.n_tanks * self.t + tank_idx * self.t + self.t] = tanks_lb_rhs
 
@@ -806,7 +809,8 @@ class Simulation:
             self.tank_volumes[tank_name] = vol
             tank_ub = np.tile(tank_data['max_vol'], self.t)
             tank_lb = np.tile(tank_data['min_vol'], self.t)
-            tank_lb[-1] = tank_data['final_vol']
+            if self.opt_model.final_vol_constraint:
+                tank_lb[-1] = tank_data['final_vol']
             tank_is_violation = np.logical_or(np.any(vol.T - tank_lb < 0, axis=1), np.any(tank_ub - vol.T < 0, axis=1))
 
             violated_vol = (np.sum(np.maximum(0, tank_lb.reshape(-1, 1) - vol), axis=1)

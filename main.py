@@ -124,7 +124,7 @@ def run_single_model(model_class, model_params, sim_n, nominal_cost=None, sample
 
 
 def por(uset_data, forecast, methods, net_path, group_styles=None, t=24, n=500, milp=False, plot=True,
-        sampling_method='normal', seed=42, omega_to_alpha='gaussian', stat_analyze=True):
+        sampling_method='normal', seed=42, omega_to_alpha='gaussian', stat_analyze=True, final_vol_constraint=True):
     """
     Price of Robustness (POR) comparison across multiple optimization methods.
     """
@@ -144,6 +144,7 @@ def por(uset_data, forecast, methods, net_path, group_styles=None, t=24, n=500, 
         'forecast': forecast,
         'uset_estimator': uset_estimator,
         'milp': milp,
+        'final_vol_constraint': final_vol_constraint,
     }
 
     # Get nominal cost from LP for POR calculation
@@ -201,13 +202,13 @@ def por(uset_data, forecast, methods, net_path, group_styles=None, t=24, n=500, 
 
 
 def run_static_optimization(model_class, forecast, uset_estimator, net_path='data/multi_tank',
-                            t=24, n_sim=500, milp=True, plot=True, **model_params):
+                            t=24, n_sim=500, milp=True, plot=True, final_vol_constraint=True, **model_params):
     """
     Run a single static optimization with optional plotting.
     """
     net = LPNetwork(net_path)
     params = {'network': net, 't': t, 'forecast': forecast, 'uset_estimator': uset_estimator, 'milp': milp,
-              **model_params}
+              'final_vol_constraint': final_vol_constraint, **model_params}
 
     model = model_class(**params)
     model.formulate()
@@ -235,7 +236,7 @@ def run_static_optimization(model_class, forecast, uset_estimator, net_path='dat
 def run_mpc_experiment(dm, uset_estimator, realizations, prices_col, demand_cols, opt_method='ro',
                        start_datetime=None, step_horizon=24, wait=1, experiment_horizon=48,
                        forecast_method='xgb', forecast_params=None, net_path='data/multi_tank',
-                       milp=True, plot=True, holiday_country='HU', simulator=None, **opt_params):
+                       milp=True, plot=True, holiday_country='HU', simulator=None, final_vol_constraint=True, **opt_params):
     """
     Run an MPC rolling horizon experiment.
 
@@ -263,7 +264,7 @@ def run_mpc_experiment(dm, uset_estimator, realizations, prices_col, demand_cols
               prices_col=prices_col, demand_cols=demand_cols,
               forecast_method=forecast_method, forecast_params=forecast_params,
               milp=milp, holiday_country=holiday_country, simulator=simulator,
-              **opt_params)
+              final_vol_constraint=final_vol_constraint, **opt_params)
     mpc.init_opt_model()
     mpc.run()
 
@@ -374,7 +375,9 @@ def _run_mpc_sweep_from_config(config, dm, uset_estimator):
 
         print(f"  [{label}] running...")
         group = method.get('group', label)
-        mpc = run_mpc_experiment(opt_method=opt_method, simulator=simulator, **common_kwargs, **params)
+        mpc = run_mpc_experiment(opt_method=opt_method, simulator=simulator,
+                                 final_vol_constraint=opts.get('final_vol_constraint', True),
+                                 **common_kwargs, **params)
         mpc_metrics = _compute_mpc_metrics(mpc)
         rows.append({'label': label, 'group': group, 'opt_method': opt_method, **params, **mpc_metrics})
 
@@ -491,6 +494,7 @@ def _run_static_from_config(config, forecaster, uset_estimator):
         n_sim=exp.get('simulation', {}).get('n_samples', 500),
         milp=opts.get('milp', True),
         plot=opts.get('plot', True),
+        final_vol_constraint=opts.get('final_vol_constraint', True),
         **exp.model.get('params', {})
     )
 
@@ -527,6 +531,7 @@ def _run_por_from_config(config, dm, forecaster, uset_estimator):
         plot=opts.get('plot', True),
         omega_to_alpha=opts.get('omega_to_alpha', 'gaussian'),
         stat_analyze=opts.get('stat_analyze', True),
+        final_vol_constraint=opts.get('final_vol_constraint', True),
     )
 
 
@@ -565,6 +570,7 @@ def _run_mpc_from_config(config, dm, uset_estimator):
         milp=opts.get('milp', True),
         plot=opts.get('plot', True),
         holiday_country=config.forecast.get('holiday_country', 'HU'),
+        final_vol_constraint=opts.get('final_vol_constraint', True),
         **exp.get('model_params', {})
     )
 
