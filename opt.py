@@ -253,7 +253,8 @@ class BaseOptModel:
             solver_opts.update(self.solver_params)
 
         self.problem.solve(solver=cp.GUROBI, reoptimize=True, verbose=self.solver_display, **solver_opts)
-        print(f"Status: {self.problem.status} | Optimal value: {self.problem.value} | Model: {type(self).__name__}")
+        if self.solver_display:
+            print(f"Status: {self.problem.status} | Optimal value: {self.problem.value} | Model: {type(self).__name__}")
         if self.problem.status in cp.settings.SOLUTION_PRESENT:
             self.extract_solution()
         return self.problem.status, self.problem.value

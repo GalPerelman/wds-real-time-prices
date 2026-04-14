@@ -3,6 +3,7 @@ import cvxpy as cp
 import matplotlib.pyplot as plt
 import pandas as pd
 import numpy as np
+from tqdm import tqdm
 
 import utils
 import uncertainty_utils
@@ -111,8 +112,10 @@ class MPC:
         if self.simulator is not None:
             self.simulator.initialize(self.realizations)
 
+        n_steps = self.experiment_horizon // self.wait
         _start_iloc = self.realizations.index.searchsorted(self.current_time)
-        for t in range(self.experiment_horizon // self.wait):
+        bar = tqdm(range(n_steps), desc="MPC", unit="step", ncols=180)
+        for t in bar:
             step_iloc = _start_iloc + t * self.wait
             self.current_time = self.realizations.index[step_iloc]
 
@@ -133,6 +136,9 @@ class MPC:
                                 self._fallback_offset + self.wait <= self.step_horizon)
                 if not can_fallback:
                     self.t_idx += 1
+                    bar.set_postfix_str(
+                        f"{self.current_time.strftime('%m-%d %H:%M')} | {status} | no fallback | infeasible: {self.n_infeasible}"
+                    )
                     continue
                 x_fsp = self.latest_x_fsp[self._fallback_offset:self._fallback_offset + self.wait, :]
                 x_vsp = self.latest_x_vsp[self._fallback_offset:self._fallback_offset + self.wait, :]
@@ -172,6 +178,18 @@ class MPC:
             df = self._record_step(realization, x_fsp, x_vsp, opt_tank_volumes, epanet_volumes, epanet_energy)
             self.results = pd.concat([self.results, df], ignore_index=True)
             self.t_idx += 1
+
+            fsp_power = self.net.fsp['power'].values
+            step_power = x_fsp @ fsp_power  # (wait,) total kW per implemented step
+            pred_cost = (step_power * self.last_forecast['tariff'].values[:self.wait] / 1000).sum()
+            if self.simulator is not None:
+                actual_cost = df['epanet_cost'].sum()
+            else:
+                actual_cost = (step_power * realization['tariff'].values[:self.wait] / 1000).sum()
+            bar.set_postfix_str(
+                f"{self.current_time.strftime('%m-%d %H:%M')} | {status} | "
+                f"pred: {pred_cost:.1f} | actual: {actual_cost:.1f} | infeasible: {self.n_infeasible}"
+            )
 
         if self.simulator is not None:
             self.simulator.close()
