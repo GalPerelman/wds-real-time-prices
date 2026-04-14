@@ -1,4 +1,5 @@
 
+import cvxpy as cp
 import matplotlib.pyplot as plt
 import pandas as pd
 import numpy as np
@@ -126,7 +127,7 @@ class MPC:
             self.opt_model.formulate(start_hour=self.current_time.hour)
             status, cost = self.opt_model.solve()
 
-            if status != 'optimal':
+            if status not in cp.settings.SOLUTION_PRESENT:
                 self.n_infeasible += 1
                 can_fallback = (self.latest_x_fsp is not None and
                                 self._fallback_offset + self.wait <= self.step_horizon)

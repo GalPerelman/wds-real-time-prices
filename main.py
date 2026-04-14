@@ -1,4 +1,5 @@
 import argparse
+import cvxpy as cp
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
@@ -102,7 +103,7 @@ def run_single_model(model_class, model_params, sim_n, nominal_cost=None, sample
     model.formulate()
     status, cost = model.solve()
 
-    if status != 'optimal':
+    if status not in cp.settings.SOLUTION_PRESENT:
         return None
 
     # Use shared sample for simulation evaluation
@@ -115,6 +116,7 @@ def run_single_model(model_class, model_params, sim_n, nominal_cost=None, sample
         'avg_cost': avg_cost,
         'reliability': 1 - violation_rate,
         'violated_vol': sim.violation_volume.sum().sum(),
+        'inaccurate': status != 'optimal',
     }
 
     if nominal_cost is not None:
@@ -214,7 +216,7 @@ def run_static_optimization(model_class, forecast, uset_estimator, net_path='dat
     model.formulate()
     status, cost = model.solve()
 
-    if status != 'optimal':
+    if status not in cp.settings.SOLUTION_PRESENT:
         return None
 
     sim = Simulation(model, sampling_method="normal", n=n_sim)
