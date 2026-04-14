@@ -136,3 +136,191 @@ def series_hourly_distribution(df: pd.DataFrame, col: str):
 
     fig.align_ylabels()
     fig.subplots_adjust(bottom=0.1, top=0.95, left=0.1, right=0.9, hspace=0.15)
+
+class MPCGraphs:
+    def __init__(self, trajectories, net):
+        self.trajectories = trajectories
+        self.net = net
+
+    def plot_hydraulic_accuracy(self, methods=None):
+        all_labels = self.trajectories['label'].unique().tolist()
+        if methods is None:
+            methods = all_labels
+        n_methods = len(methods)
+        n_tanks = self.net.n_tanks
+        tank_ids = list(self.net.tanks.index)
+
+        fig, axes = plt.subplots(nrows=n_methods, ncols=n_tanks, figsize=(3.2 * n_tanks, 2 * n_methods), sharex=True)
+        if n_methods == 1:
+            axes = axes[np.newaxis, :]
+        if n_tanks == 1:
+            axes = axes[:, np.newaxis]
+
+        available = self.trajectories['label'].unique().tolist()
+        for row, label in enumerate(methods):
+            df = self.trajectories[self.trajectories['label'] == label]
+            if df.empty:
+                raise ValueError(f"Label '{label}' not found. Available: {available}")
+            for col, tank_id in enumerate(tank_ids):
+                ax = axes[row, col]
+                opt_col = f'opt_vol_tank_{tank_id}'
+                epanet_col = f'epanet_vol_tank_{tank_id}'
+                ax.plot(df[opt_col].values, marker='o', color='C0', label='Opt', markeredgecolor='k',
+                        markersize=0, alpha=1)
+                if epanet_col in df.columns:
+                    ax.plot(df[epanet_col].values, marker='o', color='C1', label='EPANET', markeredgecolor='k',
+                            markersize=0, alpha=1)
+                tank_data = self.net.tanks.loc[tank_id]
+                ax.axhline(tank_data['min_vol'], color='k', linestyle='--')
+                ax.axhline(tank_data['max_vol'], color='k', linestyle='--')
+                ax.grid()
+                if row == 0:
+                    ax.set_title(f'Tank {tank_id}')
+                if col == 0:
+                    model = df['model'].iloc[0].upper()
+                    prefix = '' if model == label.upper() else f'{model} '
+                    ax.set_ylabel(f'{prefix}{label}\nVolume ($m^3$)')
+                if row == n_methods - 1:
+                    ax.set_xlabel('Time (Hr)')
+
+        handles, labels = axes[0, 0].get_legend_handles_labels()
+        fig.legend(handles, labels, bbox_to_anchor=(0.1, 1), loc='upper left', bbox_transform=fig.transFigure, ncol=2)
+        fig.align_ylabels()
+        fig.subplots_adjust(left=0.11, right=0.97, hspace=0.2, wspace=0.25, top=0.88, bottom=0.08)
+        return fig, axes
+
+    def plot_energy_accuracy(self, methods=None):
+        all_labels = self.trajectories['label'].unique().tolist()
+        if methods is None:
+            methods = all_labels
+
+        pump_cols = self.net.fsp.columns[self.net.fsp.columns.str.startswith('pump_')]
+        pump_membership = self.net.fsp[pump_cols].copy()
+        pump_membership.columns = pump_membership.columns.str.removeprefix('pump_')
+        pump_ids = list(pump_membership.columns)
+        n_pumps = len(pump_ids)
+        n_methods = len(methods)
+
+        fig, axes = plt.subplots(nrows=n_methods, ncols=n_pumps,
+                                 figsize=(3.2 * n_pumps, 2 * n_methods), sharex=True)
+        if n_methods == 1:
+            axes = axes[np.newaxis, :]
+        if n_pumps == 1:
+            axes = axes[:, np.newaxis]
+
+        for row, label in enumerate(methods):
+            df = self.trajectories[self.trajectories['label'] == label]
+            if df.empty:
+                raise ValueError(f"Label '{label}' not found. Available: {all_labels}")
+
+            # Disaggregate combo energy to physical pump level
+            opt_energy_pump = {}
+            for pump_id in pump_ids:
+                combos_with_pump = pump_membership.index[pump_membership[pump_id] > 0]
+                opt_energy_pump[pump_id] = sum(
+                    df[f'opt_energy_{c}'].values for c in combos_with_pump
+                )
+
+            model = df['model'].iloc[0].upper()
+            prefix = '' if model == label.upper() else f'{model} '
+
+            for col, pump_id in enumerate(pump_ids):
+                ax = axes[row, col]
+                ax.plot(opt_energy_pump[pump_id], marker='o', color='C0', label='Opt',
+                        markeredgecolor='k', markersize=0)
+                epanet_col = f'epanet_energy_{pump_id}'
+                if epanet_col in df.columns:
+                    ax.plot(df[epanet_col].values, marker='o', color='C1', label='EPANET',
+                            markeredgecolor='k', markersize=0)
+                ax.grid()
+                if row == 0:
+                    ax.set_title(f'Pump {pump_id}')
+                if col == 0:
+                    ax.set_ylabel(f'{prefix}{label}\nEnergy (kWh)')
+                if row == n_methods - 1:
+                    ax.set_xlabel('Time (Hr)')
+
+        handles, labels = axes[0, 0].get_legend_handles_labels()
+        fig.legend(handles, labels, bbox_to_anchor=(0.1, 1), loc='upper left', bbox_transform=fig.transFigure, ncol=2)
+        fig.align_ylabels()
+        fig.subplots_adjust(left=0.11, right=0.97, hspace=0.2, wspace=0.25, top=0.88, bottom=0.08)
+        return fig, axes
+
+    def plot_hydraulic_scatter(self, methods=None):
+        all_labels = self.trajectories['label'].unique().tolist()
+        if methods is None:
+            methods = all_labels
+
+        df = self.trajectories[self.trajectories['label'].isin(methods)]
+        tank_ids = list(self.net.tanks.index)
+
+        opt_vals, epanet_vals = [], []
+        for tank_id in tank_ids:
+            opt_col = f'opt_vol_tank_{tank_id}'
+            epanet_col = f'epanet_vol_tank_{tank_id}'
+            if epanet_col in df.columns:
+                opt_vals.append(df[opt_col].values)
+                epanet_vals.append(df[epanet_col].values)
+
+        opt_vals = np.concatenate(opt_vals)
+        epanet_vals = np.concatenate(epanet_vals)
+        mae = np.mean(np.abs(opt_vals - epanet_vals))
+
+        fig, ax = plt.subplots()
+        ax.scatter(opt_vals, epanet_vals, color='C0', alpha=0.5, edgecolors='k', linewidths=0.4, zorder=5)
+
+        lims = [min(opt_vals.min(), epanet_vals.min()) * 0.4, max(opt_vals.max(), epanet_vals.max()) * 1.1]
+        ax.plot(lims, lims, color='k', linestyle='--', linewidth=1)
+        ax.set_xlim(lims)
+        ax.set_ylim(lims)
+
+        ax.set_xlabel('Opt Volume ($m^3$)')
+        ax.set_ylabel('EPANET Volume ($m^3$)')
+        ax.text(0.04, 0.95, f'MAE = {mae:.1f} $m^3$', transform=ax.transAxes, va='top', ha='left',
+                bbox=dict(facecolor='white', edgecolor='grey', linewidth=1, alpha=0.5))
+        ax.set_axisbelow(True)
+        ax.grid()
+        ax.set_aspect('equal')
+        fig.subplots_adjust(left=0.1, right=0.95, top=0.92, bottom=0.15)
+        return fig, ax
+
+    def plot_por(self, summary, group_styles=None):
+        fig, ax = plt.subplots(figsize=(6, 5))
+
+        for group, grp_df in summary.groupby('group', sort=False):
+            style = (group_styles or {}).get(group, {})
+            color = style.get('color', None)
+            marker = style.get('marker', 'o')
+            ax.plot(grp_df['actual_cost'], grp_df['constraint_satisfaction_rate'],
+                    color=color, marker=marker, label=group, markeredgecolor='k')
+
+        ax.set_xlabel('Actual Cost')
+        ax.set_ylabel('Constraint Satisfaction Rate')
+        ax.legend()
+        ax.grid()
+        ax.set_axisbelow(True)
+        fig.subplots_adjust(left=0.12, right=0.95, top=0.95, bottom=0.1)
+        return fig, ax
+
+
+if __name__ == "__main__":
+    # Example usage of the MPCGraphs class with sample data
+    from network import LPNetwork
+    import pandas as pd
+
+    net = LPNetwork('data/multi_tank')
+    traj = pd.read_csv('mpc_trajectories.csv')
+
+    g = MPCGraphs(traj, net)
+    g.plot_hydraulic_accuracy(methods=['LP', 'omega=2.0', 'alpha=[0.9, 0.9]'])
+    g.plot_energy_accuracy(methods=['LP', 'omega=2.0', 'alpha=[0.9, 0.9]'])
+    g.plot_hydraulic_scatter()
+
+    group_styles = {
+        'LP': {'color': '#333333', 'marker': 's'},
+        'RO-Ellipsoid': {'color': '#105A7F', 'marker': 'o'},
+        'CC-SP': {'color': '#FF9E00', 'marker': 'o'},
+    }
+
+    g.plot_por(pd.read_csv('mpc_summary.csv'), group_styles=group_styles)
+    plt.show()
