@@ -69,7 +69,7 @@ def expand_methods(methods):
             for param_name, values in sweep.items():
                 for val in values:
                     expanded.append({
-                        'label':      f'{param_name}={val}',
+                        'label':      f'{opt_method.upper()}_{param_name}={val}',
                         'group':      group,
                         'opt_method': opt_method,
                         'params':     {**base_params, param_name: val}

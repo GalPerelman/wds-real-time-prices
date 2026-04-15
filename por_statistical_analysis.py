@@ -2,13 +2,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 from scipy.stats import norm
-
-DEFAULT_GROUP_STYLES = [
-    {'color': '#105A7F', 'marker': 'o', 'alpha': 1.0},
-    {'color': '#229FBF', 'marker': 's', 'alpha': 1.0},
-    {'color': '#FFC533', 'marker': '^', 'alpha': 1.0},
-    {'color': '#f21c1c', 'marker': 'D', 'alpha': 1.0},
-]
+from graphs import METHOD_STYLES, build_label_colors
 
 
 def compute_theoretical_joint(shared_sample, mu, delta, sigma_rhs, t, alpha_range):
@@ -55,7 +49,7 @@ def compute_theoretical_joint(shared_sample, mu, delta, sigma_rhs, t, alpha_rang
     return np.array(result)
 
 
-def plot_por_results(df, group_styles=None, sp_theoretical_data=None, omega_to_alpha='gaussian', stat_analyze=True):
+def plot_por_results(df, sp_theoretical_data=None, omega_to_alpha='gaussian', stat_analyze=True):
     plot_configs = [
         ('avg_cost', 'reliability', 'Average Cost (€)', 'Constraints Satisfaction (%)'),
         ('avg_cost', 'violated_vol', 'Average Cost (€)', 'Violated Volume ($m^3$)'),
@@ -63,15 +57,18 @@ def plot_por_results(df, group_styles=None, sp_theoretical_data=None, omega_to_a
         ('objective', 'reliability', 'Solver Objective (€)', 'Constraints Satisfaction (%)'),
     ]
 
-    # Build styles for each group
-    groups = df['group'].unique()
-    styles = {}
-    for i, group in enumerate(groups):
-        if group_styles and group in group_styles:
-            styles[group] = group_styles[group]
-        else:
-            default = DEFAULT_GROUP_STYLES[i % len(DEFAULT_GROUP_STYLES)]
-            styles[group] = default.copy()
+    # Build styles for each group using the global METHOD_STYLES palette
+    groups = list(dict.fromkeys(df['group'].tolist()))
+    label_to_model = {g: df[df['group'] == g]['opt_method'].iloc[0] for g in groups}
+    group_colors = build_label_colors(label_to_model)
+    styles = {
+        g: {
+            'color': group_colors[g],
+            'marker': METHOD_STYLES.get(label_to_model[g], {}).get('marker', 'o'),
+            'alpha': 1.0,
+        }
+        for g in groups
+    }
 
     figures = []
     for x_col, y_col, xlabel, ylabel in plot_configs:

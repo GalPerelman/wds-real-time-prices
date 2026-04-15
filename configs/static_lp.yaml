@@ -24,7 +24,6 @@ forecast:
   holiday_country: "HU"
 
 experiment:
-  name: "static_ro_ellipsoid"
   type: "static"
 
   forecast_period:

@@ -1,8 +1,57 @@
 import math
 import numpy as np
+import matplotlib as mpl
 import matplotlib.pyplot as plt
+import matplotlib.dates as mdates
+import matplotlib.colors as mcolors
 import pandas as pd
 from matplotlib import ticker as mtick
+from matplotlib.gridspec import GridSpec
+
+# Global palette for optimization methods.
+# 'color'  - representative fixed color for single-point/static plots
+# 'cmap'   - colormap for multi-parameter sweep shading
+# 'marker' - shared marker style
+# Per-group styles for all MPC plots. Keys match the 'group' field in experiment configs.
+# 'color'  - single representative color used in plot_por
+# 'cmap'   - colormap used in plot_tank_trajectories to shade individual sweep variants
+# 'marker' - marker style used in plot_por
+# All three fields are required for every entry (no fallback).
+GROUP_STYLES = {
+    'LP':            {'color': 'k',        'cmap': 'Greys',    'marker': 'x'},
+    'RO-Ellipsoid':  {'color': 'C0',  'cmap': 'Blues',    'marker': 'o'},
+    'RO-Budget':     {'color': '#6a0dad',  'cmap': 'Purples',  'marker': 'D'},
+    'CC-SP':         {'color': '#d13b2c',  'cmap': 'Reds',     'marker': 's'},
+    'CC-SP-relaxed': {'color': 'C1',  'cmap': 'Oranges',  'marker': '^'},
+}
+
+
+def build_label_colors(label_to_group):
+    """
+    Assign one color per label using GROUP_STYLES.
+
+    label_to_group: ordered dict {label_str: group_str}
+        e.g. {'RO_omega=0.5': 'RO-Ellipsoid', 'RO_omega=1.0': 'RO-Ellipsoid',
+              'SP_alpha=0.9': 'CC-SP'}
+
+    Within each group, multiple labels get shaded across the group's cmap [0.45, 0.85].
+    A single label in a group gets the group's fixed 'color'.
+
+    Returns {label: rgba_color}.
+    """
+    groups_ordered = list(dict.fromkeys(label_to_group.values()))
+    colors = {}
+    for group in groups_ordered:
+        labels_in_group = [l for l, g in label_to_group.items() if g == group]
+        style = GROUP_STYLES[group]
+        if len(labels_in_group) == 1:
+            colors[labels_in_group[0]] = mcolors.to_rgba(style['color'])
+        else:
+            cmap = mpl.colormaps[style['cmap']]
+            shades = np.linspace(0.45, 0.85, len(labels_in_group))
+            for i, label in enumerate(labels_in_group):
+                colors[label] = cmap(shades[i])
+    return colors
 
 
 class OptGraphs:
@@ -135,7 +184,6 @@ def series_hourly_distribution(df: pd.DataFrame, col: str):
     axes[2].hist(df[col], bins=25, edgecolor='k', alpha=0.5)
     axes[2].set_ylabel(col)
     axes[2].set_xlabel("Count")
-
 
     fig.align_ylabels()
     fig.subplots_adjust(bottom=0.1, top=0.95, left=0.1, right=0.9, hspace=0.15)
@@ -288,18 +336,142 @@ class MPCGraphs:
         fig.subplots_adjust(left=0.1, right=0.95, top=0.92, bottom=0.15)
         return fig, ax
 
-    def plot_por(self, summary, group_styles=None):
+    def plot_tank_trajectories(self, methods=None, show_opt=False, figsize=None):
+        """
+        Plot tank volume trajectories over the full MPC experiment.
+
+        One row per tank plus a shared tariff panel at the bottom.
+        All methods are overlaid on each tank subplot, colored by group
+        (each group gets its color from GROUP_STYLES; all sweep variants
+        within a group share the same color).
+
+        Args:
+            methods:  list of labels to include; None = all labels
+            show_opt: if True and EPANET columns are present, overlay the
+                      optimizer (LP mass-balance) volumes as dashed lines.
+            figsize:  override default figure size
+        """
+        all_labels = self.trajectories['label'].unique().tolist()
+        if methods is None:
+            methods = all_labels
+
+        tank_ids = list(self.net.tanks.index)
+        n_tanks = len(tank_ids)
+
+        label_to_group = {}
+        for label in methods:
+            row = self.trajectories[self.trajectories['label'] == label]
+            if not row.empty:
+                label_to_group[label] = row['group'].iloc[0]
+        label_colors = build_label_colors(label_to_group)
+
+        has_epanet = f'epanet_vol_tank_{tank_ids[0]}' in self.trajectories.columns
+
+        n_rows = n_tanks + 1
+        height_ratios = [2] * n_tanks + [1]
+        fig = plt.figure(figsize=figsize or (10, 2 * n_tanks + 1))
+        gs = GridSpec(n_rows, 1, height_ratios=height_ratios, hspace=0.15, figure=fig)
+        tank_axes = [fig.add_subplot(gs[0])]
+        for i in range(1, n_tanks):
+            tank_axes.append(fig.add_subplot(gs[i], sharex=tank_axes[0]))
+        tariff_ax = fig.add_subplot(gs[-1], sharex=tank_axes[0])
+
+        for ax_idx, tank_id in enumerate(tank_ids):
+            ax = tank_axes[ax_idx]
+            tank_data = self.net.tanks.loc[tank_id]
+            vol_col_key = f'epanet_vol_tank_{tank_id}' if has_epanet else f'opt_vol_tank_{tank_id}'
+            opt_col_key = f'opt_vol_tank_{tank_id}'
+
+            for label in methods:
+                df = self.trajectories[self.trajectories['label'] == label]
+                if df.empty:
+                    raise ValueError(f"Label '{label}' not found. Available: {all_labels}")
+                color = label_colors[label]
+                time = pd.to_datetime(df['time'], dayfirst=True)
+                vol = df[vol_col_key].values
+
+                zorder = 5 if label in ['lp', 'LP'] else 3
+                ax.plot(time, vol, color=color, linewidth=1.2, label=label, zorder=zorder)
+
+                if show_opt and has_epanet:
+                    ax.plot(time, df[opt_col_key].values, color=color, linewidth=0.8,
+                            linestyle='--', alpha=0.55, zorder=2)
+
+                # Violation markers: 'x' where volume crosses real bounds
+                viol_mask = (vol < tank_data['min_vol']) | (vol > tank_data['max_vol'])
+                if viol_mask.any():
+                    ax.scatter(time[viol_mask], vol[viol_mask], color=color,
+                               marker='o', s=50, linewidths=1.5, zorder=5, facecolor="none")
+
+            ax.axhline(tank_data['min_vol'], color='k', linestyle='--', linewidth=0.9, zorder=1)
+            ax.axhline(tank_data['max_vol'], color='k', linestyle='--', linewidth=0.9, zorder=1)
+            ax.set_ylabel(f'Tank {tank_id} ($m^3$)')
+            ax.grid(zorder=0)
+            ax.set_axisbelow(True)
+            plt.setp(ax.get_xticklabels(), visible=False)
+
+        # Tariff panel — realized and predicted are identical across methods; use first
+        ref_df = self.trajectories[self.trajectories['label'] == methods[0]]
+        ref_time = pd.to_datetime(ref_df['time'], dayfirst=True)
+        tariff_ax.plot(ref_time, ref_df['realized_tariff'].values,
+                       color='k', linewidth=1.2, label='Realized')
+        tariff_ax.plot(ref_time, ref_df['predicted_tariff'].values,
+                       color='k', linewidth=0.9, linestyle='--', alpha=0.5, label='Predicted')
+        tariff_ax.set_ylabel('Tariff\n(€/MWh)')
+        tariff_ax.grid(zorder=0)
+        tariff_ax.set_axisbelow(True)
+        tariff_ax.xaxis.set_major_formatter(mdates.DateFormatter('%m-%d\n%H:%M'))
+        tariff_ax.xaxis.set_major_locator(mdates.AutoDateLocator())
+        tariff_ax.legend(loc='upper right', fontsize=8, framealpha=0.9)
+        fig.autofmt_xdate(rotation=0, ha='center')
+
+        # Main legend: methods + opt dashed line + bounds — no tariff (handled locally above)
+        from matplotlib.lines import Line2D
+        handles, labels_leg = tank_axes[0].get_legend_handles_labels()
+        if show_opt and has_epanet:
+            handles += [Line2D([0], [0], color='grey', linewidth=1.8, linestyle='--')]
+            labels_leg += ['Opt (LP)']
+        handles += [Line2D([0], [0], color='k', linewidth=1.8, linestyle='--')]
+        labels_leg += ['Min/Max bounds']
+
+        ncol = min(len(handles), 5)
+        nrow = math.ceil(len(handles) / ncol)
+        idx = list(range(len(handles))) + [-1] * (nrow * ncol - len(handles))
+        order = [i for i in np.array(idx).reshape(nrow, ncol).T.flatten() if i >= 0]
+        handles = [handles[i] for i in order]
+        labels_leg = [labels_leg[i] for i in order]
+
+        leg = fig.legend(handles, labels_leg, loc='upper left', bbox_to_anchor=(0.095, 0.96),
+                         bbox_transform=fig.transFigure, ncol=ncol, fontsize=9,
+                         framealpha=0.9)
+        for line in leg.get_lines():
+            line.set_linewidth(2.2)
+
+        fig.subplots_adjust(left=0.1, right=0.97, top=0.87, bottom=0.08)
+        return fig, tank_axes, tariff_ax
+
+    def plot_por(self, summary, violations_metric="violated_vol"):
+        """
+        Plot cost vs. violations (POR curve) for all method groups.
+
+        summary:           DataFrame with 'group', 'actual_cost', and the
+                           violations_metric column.
+        violations_metric: 'violated_vol' or 'constraint_satisfaction_rate'
+
+        Colors and markers are taken from GROUP_STYLES keyed by group name.
+        All groups present in the summary must be defined in GROUP_STYLES.
+        """
         fig, ax = plt.subplots(figsize=(6, 5))
 
         for group, grp_df in summary.groupby('group', sort=False):
-            style = (group_styles or {}).get(group, {})
-            color = style.get('color', None)
-            marker = style.get('marker', 'o')
-            ax.plot(grp_df['actual_cost'], grp_df['constraint_satisfaction_rate'],
-                    color=color, marker=marker, label=group, markeredgecolor='k')
+            style = GROUP_STYLES[group]
+            ax.scatter(grp_df['actual_cost'], grp_df[violations_metric],
+                    color=style['color'], marker=style['marker'], s=40,
+                    label=group, edgecolor='k')
 
-        ax.set_xlabel('Actual Cost')
-        ax.set_ylabel('Constraint Satisfaction Rate')
+        ax.set_xlabel('Actual Cost (€)')
+        ax.set_ylabel({"violated_vol": "Violated Volume ($m^3$)",
+                       "constraint_satisfaction_rate": 'Constraint Satisfaction Rate'}[violations_metric])
         ax.legend()
         ax.grid()
         ax.set_axisbelow(True)

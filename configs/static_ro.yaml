@@ -26,7 +26,6 @@ forecast:
     n_weeks: 4
 
 experiment:
-  name: "static_ro_ellipsoid"
   type: "static"
 
   forecast_period:

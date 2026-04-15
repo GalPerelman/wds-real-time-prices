@@ -1,4 +1,5 @@
 import argparse
+from pathlib import Path
 import cvxpy as cp
 import matplotlib.pyplot as plt
 import numpy as np
@@ -125,7 +126,7 @@ def run_single_model(model_class, model_params, sim_n, nominal_cost=None, sample
     return result
 
 
-def por(uset_data, forecast, methods, net_path, group_styles=None, t=24, n=500, milp=False, plot=True,
+def por(uset_data, forecast, methods, net_path, t=24, n=500, milp=False, plot=True,
         sampling_method='normal', seed=42, omega_to_alpha='gaussian', stat_analyze=True, final_vol_constraint=True):
     """
     Price of Robustness (POR) comparison across multiple optimization methods.
@@ -197,7 +198,7 @@ def por(uset_data, forecast, methods, net_path, group_styles=None, t=24, n=500, 
                                    'delta': sp_ref.delta, 'sigma_rhs': sp_ref.sigma_rhs, 't': t}
 
     if plot and len(df) > 0:
-        psa.plot_por_results(df, group_styles, sp_theoretical_data=sp_theoretical_data,
+        psa.plot_por_results(df, sp_theoretical_data=sp_theoretical_data,
                              omega_to_alpha=omega_to_alpha, stat_analyze=stat_analyze)
 
     return df
@@ -352,7 +353,11 @@ def _run_mpc_sweep_from_config(config, dm, uset_estimator):
         plot=False,
     )
 
-    export_path = opts.get('export_path', None)
+    output_dir = opts.get('output_dir', None)
+    plot_names = opts.get('plots', [])
+
+    if output_dir is not None:
+        Path(output_dir).mkdir(parents=True, exist_ok=True)
 
     sim_cfg = opts.get('simulator')
 
@@ -383,18 +388,37 @@ def _run_mpc_sweep_from_config(config, dm, uset_estimator):
         mpc_metrics = _compute_mpc_metrics(mpc)
         rows.append({'label': label, 'group': group, 'opt_method': opt_method, **params, **mpc_metrics})
 
-        if export_path is not None:
-            traj = mpc.results.copy()
-            traj['model'] = opt_method
-            traj['label'] = label
-            trajectory_parts.append(traj)
-
-    if export_path is not None and trajectory_parts:
-        pd.concat(trajectory_parts).to_csv(export_path + '_trajectories.csv', index=False)
-        print(f"  Trajectories saved to: {export_path}")
+        traj = mpc.results.copy()
+        traj['model'] = opt_method
+        traj['label'] = label
+        traj['group'] = group
+        trajectory_parts.append(traj)
 
     results = pd.DataFrame(rows)
-    results.to_csv(export_path + '_summary.csv', index=False)
+    all_traj = pd.concat(trajectory_parts, ignore_index=True)
+
+    if output_dir is not None:
+        results.to_csv(f"{output_dir}/summary.csv", index=False)
+        all_traj.to_csv(f"{output_dir}/trajectories.csv", index=False)
+        print(f"  Outputs saved to: {output_dir}/")
+
+        net = LPNetwork(config.data.network_path)
+        g = graphs.MPCGraphs(all_traj, net)
+        plot_fns = {
+            'tank_trajectories': lambda: g.plot_tank_trajectories(),
+            'hydraulic_accuracy': lambda: g.plot_hydraulic_accuracy(),
+            'hydraulic_scatter': lambda: g.plot_hydraulic_scatter(),
+            'energy_accuracy': lambda: g.plot_energy_accuracy(),
+            'por': lambda: g.plot_por(results),
+        }
+        for name in plot_names:
+            fig_out = plot_fns[name]()
+            if isinstance(fig_out, tuple):
+                fig_out = fig_out[0]
+            fig_out.savefig(f"{output_dir}/{name}.png", dpi=150, bbox_inches='tight')
+            plt.close(fig_out)
+            print(f"  Saved: {output_dir}/{name}.png")
+
     return results
 
 
@@ -509,23 +533,12 @@ def _run_por_from_config(config, dm, forecaster, uset_estimator):
         exp.forecast_period.end
     )
 
-    # Expand methods with sweeps
     methods = cfg.expand_methods(exp.methods)
-
-    # Convert group_styles if provided
-    group_styles = None
-    if exp.get('group_styles'):
-        group_styles = {
-            name: {'color': s.get('color'), 'marker': s.get('marker'), 'alpha': s.get('alpha', 1.0)}
-            for name, s in exp.group_styles.items()
-        }
-
     opts = exp.get('options', {})
     return por(
         uset_data=dm.uncertainty_training_data,
         forecast=forecast_df,
         methods=methods,
-        group_styles=group_styles,
         net_path=config.data.network_path,
         t=opts.get('t', 24),
         n=exp.get('simulation', {}).get('n_samples', 500),
