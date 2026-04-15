@@ -299,8 +299,8 @@ def _compute_mpc_metrics(mpc):
     fsp_powers = net.fsp['power'].values
     fsp_cols = [f'x_fsp_{i}' for i in range(net.n_fsp)]
     total_fsp_power = results[fsp_cols].values @ fsp_powers
-    actual_cost    = float((results['realized_tariff'].values  * total_fsp_power).sum())
-    predicted_cost = float((results['predicted_tariff'].values * total_fsp_power).sum())
+    actual_cost    = float((results['realized_tariff'].values  * total_fsp_power).sum()) / 1000
+    predicted_cost = float((results['predicted_tariff'].values * total_fsp_power).sum()) / 1000
 
     # Constraint violations — summed from per-step columns computed in MPC._record_step
     viol_col = 'epanet_n_violations' if 'epanet_n_violations' in results.columns else 'opt_n_violations'
