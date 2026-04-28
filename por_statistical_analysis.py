@@ -2,7 +2,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 from scipy.stats import norm
-from graphs import METHOD_STYLES, build_label_colors
+from graphs import GROUP_STYLES
 
 
 def compute_theoretical_joint(shared_sample, mu, delta, sigma_rhs, t, alpha_range):
@@ -57,14 +57,11 @@ def plot_por_results(df, sp_theoretical_data=None, omega_to_alpha='gaussian', st
         ('objective', 'reliability', 'Solver Objective (€)', 'Constraints Satisfaction (%)'),
     ]
 
-    # Build styles for each group using the global METHOD_STYLES palette
     groups = list(dict.fromkeys(df['group'].tolist()))
-    label_to_model = {g: df[df['group'] == g]['opt_method'].iloc[0] for g in groups}
-    group_colors = build_label_colors(label_to_model)
     styles = {
         g: {
-            'color': group_colors[g],
-            'marker': METHOD_STYLES.get(label_to_model[g], {}).get('marker', 'o'),
+            'color': GROUP_STYLES[g]['color'],
+            'marker': GROUP_STYLES[g]['marker'],
             'alpha': 1.0,
         }
         for g in groups

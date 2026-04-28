@@ -54,31 +54,22 @@ def plot_forecast_comparison(forecast_df, actuals_df, demand_cols, prices_col):
     forecast_aligned = forecast_df.loc[common_index]
     actuals_aligned = actuals_df.loc[common_index]
 
-    n_cols = len(forecast_df.columns)
-    fig, axes = plt.subplots(nrows=n_cols, ncols=1, sharex=True, figsize=(6, 5))
-    if n_cols == 1:
-        axes = [axes]
+    panels = []
+    for col in demand_cols:
+        panels.append({
+            'time': actuals_aligned.index,
+            'predicted': forecast_aligned[col].values,
+            'realized': actuals_aligned[col].values,
+            'ylabel': 'Demand\n($m^3/h$)',
+        })
+    panels.append({
+        'time': actuals_aligned.index,
+        'predicted': forecast_aligned[prices_col].values,
+        'realized': actuals_aligned[prices_col].values,
+        'ylabel': 'Tariff\n(€/MWh)',
+    })
 
-    for i, col in enumerate(demand_cols):
-        axes[i].plot(actuals_aligned.index, actuals_aligned[col], label='Actual', color='C0')
-        axes[i].plot(forecast_aligned.index, forecast_aligned[col], label='Forecast', color='C1')
-        axes[i].set_ylabel(f'Demand\n($m^3/h$)')
-        if i == 0:
-            axes[i].legend(loc='upper right')
-
-        # Calculate and display metrics
-        mae = np.mean(np.abs(actuals_aligned[col].values - forecast_aligned[col].values))
-        axes[i].text(0.02, 0.82, f'MAE={mae:.2f}', transform=axes[i].transAxes, horizontalalignment='left')
-
-    axes[-1].plot(actuals_aligned.index, actuals_aligned[prices_col], label='Actual', color='C0')
-    axes[-1].plot(forecast_aligned.index, forecast_aligned[prices_col], label='Forecast', color='C1')
-    mae = np.mean(np.abs(actuals_aligned[prices_col].values - forecast_aligned[prices_col].values))
-    axes[-1].text(0.02, 0.82, f'MAE={mae:.2f}', transform=axes[-1].transAxes, horizontalalignment='left')
-    axes[-1].set_ylabel('Tariff\n(€/MWh)')
-    axes[-1].set_xlabel('Time')
-
-    fig.align_ylabels()
-    plt.subplots_adjust(left=0.15, right=0.95, top=0.95, bottom=0.08)
+    return graphs.plot_predicted_vs_realized(panels)
     fig.autofmt_xdate()
     return fig, axes
 
@@ -418,6 +409,9 @@ def _run_mpc_sweep_from_config(config, dm, uset_estimator, config_path=None):
             'hydraulic_scatter': lambda: g.plot_hydraulic_scatter(),
             'energy_accuracy': lambda: g.plot_energy_accuracy(),
             'por': lambda: g.plot_por(results),
+            'forecast_accuracy': lambda: graphs.plot_mpc_forecast_accuracy(all_traj),
+            'cumulative_metrics': lambda: g.plot_cumulative_metrics(),
+            'cumulative_energy_by_price': lambda: g.plot_cumulative_energy_by_price(),
         }
         for name in plot_names:
             fig_out = plot_fns[name]()

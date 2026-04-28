@@ -18,12 +18,25 @@ from matplotlib.gridspec import GridSpec
 # 'marker' - marker style used in plot_por
 # All three fields are required for every entry (no fallback).
 GROUP_STYLES = {
-    'LP':            {'color': 'k',        'cmap': 'Greys',    'marker': 'x'},
+    'LP':            {'color': 'k',        'cmap': 'Greys',    'marker': 'X'},
     'RO-Ellipsoid':  {'color': 'C0',  'cmap': 'Blues',    'marker': 'o'},
-    'RO-Budget':     {'color': '#6a0dad',  'cmap': 'Purples',  'marker': 'D'},
+    'RO-BOU':     {'color': '#368399',  'cmap': 'Greens',  'marker': 'D'},
+    'RO-BOU-1':     {'color': '#368399',  'cmap': 'Greens',  'marker': 'D'},
+    'RO-BOU-2':     {'color': '#8670FF',  'cmap': 'Purples',  'marker': 'D'},
     'CC-SP':         {'color': '#d13b2c',  'cmap': 'Reds',     'marker': 's'},
     'CC-SP-relaxed': {'color': 'C1',  'cmap': 'Oranges',  'marker': '^'},
 }
+
+
+def to_latex_label(s):
+    prefix, rest = s.split('_', 1)  # "RO", "omega=1"
+    var, val = rest.split('=')  # "omega", "1"
+
+    # capitalize Greek letter if needed
+    if var.lower() == 'omega':
+        var = r'\Omega'
+
+    return rf"${prefix}_{{{var}={val}}}$"
 
 
 def build_label_colors(label_to_group):
@@ -189,6 +202,72 @@ def series_hourly_distribution(df: pd.DataFrame, col: str):
     fig.subplots_adjust(bottom=0.1, top=0.95, left=0.1, right=0.9, hspace=0.15)
 
 
+def plot_predicted_vs_realized(panels, figsize=None):
+    """
+    Plot predicted vs realized time series for one or more signals.
+
+    panels: list of dicts, each with:
+        'time'      - array-like of timestamps
+        'predicted' - array-like of predicted values
+        'realized'  - array-like of realized values
+        'ylabel'    - str, y-axis label
+
+    Returns fig, axes.
+    """
+    n = len(panels)
+    fig, axes = plt.subplots(nrows=n, ncols=1, sharex=True, figsize=figsize or (6, 5))
+    if n == 1:
+        axes = [axes]
+
+    for i, panel in enumerate(panels):
+        ax = axes[i]
+        ax.plot(panel['time'], panel['realized'], label='Realized', color='C0')
+        ax.plot(panel['time'], panel['predicted'], label='Predicted', color='C1')
+        ax.set_ylabel(panel['ylabel'])
+        if i == 0:
+            ax.legend(loc='upper right')
+        mae = np.mean(np.abs(np.asarray(panel['predicted']) - np.asarray(panel['realized'])))
+        ax.text(0.02, 0.82, f'MAE={mae:.2f}', transform=ax.transAxes, horizontalalignment='left')
+
+    axes[-1].set_xlabel('Time')
+    fig.align_ylabels()
+    plt.subplots_adjust(left=0.15, right=0.95, top=0.95, bottom=0.08)
+    return fig, axes
+
+
+def plot_mpc_forecast_accuracy(trajectories, method=None, figsize=None):
+    """
+    Plot predicted vs realized demands and price from MPC sweep trajectories.
+
+    All methods are assumed to share the same forecaster, so any one method's
+    data is representative. method defaults to the first label in trajectories.
+    """
+    if method is None:
+        method = trajectories['label'].iloc[0]
+    df = trajectories[trajectories['label'] == method]
+    time = pd.to_datetime(df['time'])
+
+    tank_ids = [c.replace('predicted_demand_', '')
+                for c in df.columns if c.startswith('predicted_demand_')]
+
+    panels = []
+    for tank_id in tank_ids:
+        panels.append({
+            'time': time,
+            'predicted': df[f'predicted_demand_{tank_id}'].values,
+            'realized': df[f'realized_demand_{tank_id}'].values,
+            'ylabel': f'Demand {tank_id}\n($m^3/h$)',
+        })
+    panels.append({
+        'time': time,
+        'predicted': df['predicted_tariff'].values,
+        'realized': df['realized_tariff'].values,
+        'ylabel': 'Tariff\n(€/MWh)',
+    })
+
+    return plot_predicted_vs_realized(panels, figsize=figsize)
+
+
 class MPCGraphs:
     def __init__(self, trajectories, net):
         self.trajectories = trajectories
@@ -336,7 +415,7 @@ class MPCGraphs:
         fig.subplots_adjust(left=0.1, right=0.95, top=0.92, bottom=0.15)
         return fig, ax
 
-    def plot_tank_trajectories(self, methods=None, show_opt=False, figsize=None):
+    def plot_tank_trajectories(self, methods=None, show_opt=False):
         """
         Plot tank volume trajectories over the full MPC experiment.
 
@@ -349,7 +428,6 @@ class MPCGraphs:
             methods:  list of labels to include; None = all labels
             show_opt: if True and EPANET columns are present, overlay the
                       optimizer (LP mass-balance) volumes as dashed lines.
-            figsize:  override default figure size
         """
         all_labels = self.trajectories['label'].unique().tolist()
         if methods is None:
@@ -369,7 +447,7 @@ class MPCGraphs:
 
         n_rows = n_tanks + 1
         height_ratios = [2] * n_tanks + [1]
-        fig = plt.figure(figsize=figsize or (10, 2 * n_tanks + 1))
+        fig = plt.figure(figsize=(6, 1 * n_tanks + 1))
         gs = GridSpec(n_rows, 1, height_ratios=height_ratios, hspace=0.15, figure=fig)
         tank_axes = [fig.add_subplot(gs[0])]
         for i in range(1, n_tanks):
@@ -387,7 +465,7 @@ class MPCGraphs:
                 if df.empty:
                     raise ValueError(f"Label '{label}' not found. Available: {all_labels}")
                 color = label_colors[label]
-                time = pd.to_datetime(df['time'], dayfirst=True)
+                time = pd.to_datetime(df['time'])
                 vol = df[vol_col_key].values
 
                 zorder = 5 if label in ['lp', 'LP'] else 3
@@ -412,7 +490,7 @@ class MPCGraphs:
 
         # Tariff panel — realized and predicted are identical across methods; use first
         ref_df = self.trajectories[self.trajectories['label'] == methods[0]]
-        ref_time = pd.to_datetime(ref_df['time'], dayfirst=True)
+        ref_time = pd.to_datetime(ref_df['time'])
         tariff_ax.plot(ref_time, ref_df['realized_tariff'].values,
                        color='k', linewidth=1.2, label='Realized')
         tariff_ax.plot(ref_time, ref_df['predicted_tariff'].values,
@@ -450,17 +528,119 @@ class MPCGraphs:
         fig.subplots_adjust(left=0.1, right=0.97, top=0.87, bottom=0.08)
         return fig, tank_axes, tariff_ax
 
+    def plot_cumulative_metrics(self, methods=None):
+        """
+        Three stacked subplots with shared x-axis:
+          - Cumulative actual cost (EUR), one line per method label
+          - Cumulative total violated volume (m3) — sum of min and max violations
+          - Realized and predicted tariff reference panel (smaller)
+        """
+        all_labels = self.trajectories['label'].unique().tolist()
+        if methods is None:
+            methods = all_labels
+
+        label_to_group = {}
+        for label in methods:
+            row = self.trajectories[self.trajectories['label'] == label]
+            if not row.empty:
+                label_to_group[label] = row['group'].iloc[0]
+        label_colors = build_label_colors(label_to_group)
+
+        has_epanet = 'epanet_cost' in self.trajectories.columns
+        prefix = 'epanet' if has_epanet else 'opt'
+
+        # Detect violation schema: new (split min/max) vs old (combined)
+        new_schema = f'{prefix}_min_violated_vol' in self.trajectories.columns
+
+        def get_violated_vol(df):
+            if new_schema:
+                return df[f'{prefix}_min_violated_vol'].values + df[f'{prefix}_max_violated_vol'].values
+            return df[f'{prefix}_violated_vol'].values
+
+        fig = plt.figure(figsize=(8, 6))
+        gs = GridSpec(3, 1, height_ratios=[1, 1, 0.5], hspace=0.15, figure=fig)
+        ax_cost = fig.add_subplot(gs[0])
+        ax_vol = fig.add_subplot(gs[1], sharex=ax_cost)
+        ax_tariff = fig.add_subplot(gs[2], sharex=ax_cost)
+
+        for label in methods:
+            df = self.trajectories[self.trajectories['label'] == label]
+            if df.empty:
+                raise ValueError(f"Label '{label}' not found. Available: {all_labels}")
+            color = label_colors[label]
+            time = pd.to_datetime(df['time'])
+
+            if has_epanet:
+                cost_per_step = df['epanet_cost'].values
+            else:
+                opt_energy_cols = [c for c in df.columns if c.startswith('opt_energy_')]
+                total_opt_energy = df[opt_energy_cols].sum(axis=1)
+                cost_per_step = (total_opt_energy * df['realized_tariff'] / 1000).values
+
+            try:
+                label = to_latex_label(label)
+            except ValueError:
+                pass
+            ax_cost.plot(time, np.cumsum(cost_per_step), color=color, linewidth=1.2, label=label)
+            ax_vol.plot(time, np.cumsum(get_violated_vol(df)), color=color, linewidth=1.2)
+
+        ref_df = self.trajectories[self.trajectories['label'] == methods[0]]
+        ref_time = pd.to_datetime(ref_df['time'])
+        ax_tariff.plot(ref_time, ref_df['realized_tariff'].values,
+                       color='k', linewidth=1.2, label='Realized')
+        ax_tariff.plot(ref_time, ref_df['predicted_tariff'].values,
+                       color='k', linewidth=0.9, linestyle='--', alpha=0.5, label='Predicted')
+        ax_tariff.set_ylabel('Tariff\n(€/MWh)')
+        ax_tariff.grid(zorder=0)
+        ax_tariff.set_axisbelow(True)
+        ax_tariff.xaxis.set_major_formatter(mdates.DateFormatter('%m-%d\n%H:%M'))
+        ax_tariff.xaxis.set_major_locator(mdates.AutoDateLocator())
+        ax_tariff.legend(loc='upper right', fontsize=8, framealpha=0.9)
+        fig.autofmt_xdate(rotation=0, ha='center')
+
+        ax_cost.set_ylabel('Cumulative\nCost (€)')
+        ax_cost.grid(zorder=0)
+        ax_cost.set_axisbelow(True)
+        plt.setp(ax_cost.get_xticklabels(), visible=False)
+
+        ax_vol.set_ylabel('Cumulative\nViolated Vol. ($m^3$)')
+        ax_vol.grid(zorder=0)
+        ax_vol.set_axisbelow(True)
+        plt.setp(ax_vol.get_xticklabels(), visible=False)
+
+        handles, labels_leg = ax_cost.get_legend_handles_labels()
+        ncol = min(len(handles), 5)
+        nrow = math.ceil(len(handles) / ncol)
+        idx = list(range(len(handles))) + [-1] * (nrow * ncol - len(handles))
+        order = [i for i in np.array(idx).reshape(nrow, ncol).T.flatten() if i >= 0]
+        handles = [handles[i] for i in order]
+        labels_leg = [labels_leg[i] for i in order]
+
+        leg = fig.legend(handles, labels_leg, loc='upper left', bbox_to_anchor=(0.095, 0.96),
+                         bbox_transform=fig.transFigure, ncol=ncol, fontsize=9, framealpha=0.9)
+        for line in leg.get_lines():
+            line.set_linewidth(2.2)
+
+        fig.subplots_adjust(left=0.12, right=0.97, top=0.87, bottom=0.08)
+        return fig, (ax_cost, ax_vol, ax_tariff)
+
     def plot_por(self, summary, violations_metric="violated_vol"):
         """
         Plot cost vs. violations (POR curve) for all method groups.
 
         summary:           DataFrame with 'group', 'actual_cost', and the
                            violations_metric column.
-        violations_metric: 'violated_vol' or 'constraint_satisfaction_rate'
+        violations_metric: column name from summary — 'min_violated_vol', 'max_violated_vol',
+                           'violated_vol', or 'constraint_satisfaction_rate'
 
         Colors and markers are taken from GROUP_STYLES keyed by group name.
         All groups present in the summary must be defined in GROUP_STYLES.
         """
+        summary = summary.copy()
+        if 'violated_vol' not in summary.columns and \
+                'min_violated_vol' in summary.columns and 'max_violated_vol' in summary.columns:
+            summary['violated_vol'] = summary['min_violated_vol'] + summary['max_violated_vol']
+
         fig, ax = plt.subplots(figsize=(6, 5))
 
         for group, grp_df in summary.groupby('group', sort=False):
@@ -469,14 +649,230 @@ class MPCGraphs:
                     color=style['color'], marker=style['marker'], s=40,
                     label=group, edgecolor='k')
 
+        ylabels = {
+            "violated_vol":                 "Violated Volume ($m^3$)",
+            "min_violated_vol":             "Service Disruption ($m^3$)",
+            "max_violated_vol":             "Overflow Volume ($m^3$)",
+            "constraint_satisfaction_rate": "Constraint Satisfaction Rate",
+        }
         ax.set_xlabel('Actual Cost (€)')
-        ax.set_ylabel({"violated_vol": "Violated Volume ($m^3$)",
-                       "constraint_satisfaction_rate": 'Constraint Satisfaction Rate'}[violations_metric])
+        ax.set_ylabel(ylabels.get(violations_metric, violations_metric))
         ax.legend()
         ax.grid()
         ax.set_axisbelow(True)
         fig.subplots_adjust(left=0.12, right=0.95, top=0.95, bottom=0.1)
         return fig, ax
+
+    def plot_price_responsiveness(self, methods=None, bin_width=25):
+        """
+        Grouped boxplot of total EPANET energy vs realized tariff bins.
+
+        The x-axis is divided into fixed-width price bins. Within each bin,
+        one box per method label is drawn side by side, colored by group.
+        Shows whether the scheduler shifts consumption to cheap hours.
+        Requires epanet_energy_* columns in trajectories.
+
+        Args:
+            methods:   list of labels to include; None = all labels
+            bin_width: width of each price bin in EUR/MWh (default 25)
+        """
+        energy_cols = [c for c in self.trajectories.columns if c.startswith('epanet_energy_')]
+        if not energy_cols:
+            raise ValueError("No epanet_energy_* columns found in trajectories.")
+
+        all_labels = self.trajectories['label'].unique().tolist()
+        if methods is None:
+            methods = all_labels
+
+        label_to_group = {}
+        for label in methods:
+            row = self.trajectories[self.trajectories['label'] == label]
+            if not row.empty:
+                label_to_group[label] = row['group'].iloc[0]
+        label_colors = build_label_colors(label_to_group)
+
+        traj_sel = self.trajectories[self.trajectories['label'].isin(methods)]
+        price_min = np.floor(traj_sel['realized_tariff'].min() / bin_width) * bin_width
+        price_max = np.ceil(traj_sel['realized_tariff'].max() / bin_width) * bin_width
+        edges = np.arange(price_min, price_max + bin_width, bin_width)
+        bin_labels = [f"{int(e)}-{int(e + bin_width)}" for e in edges[:-1]]
+        n_bins = len(bin_labels)
+        n_methods = len(methods)
+
+        box_width = 0.8 / n_methods
+        offsets = np.linspace(-0.4 + box_width / 2, 0.4 - box_width / 2, n_methods)
+
+        fig, ax = plt.subplots(figsize=(max(8, n_bins * 0.6), 5))
+
+        legend_handles = []
+        for m_idx, label in enumerate(methods):
+            df = self.trajectories[self.trajectories['label'] == label]
+            total_energy = df[energy_cols].sum(axis=1).values
+            bin_indices = np.clip(np.digitize(df['realized_tariff'].values, edges) - 1, 0, n_bins - 1)
+
+            color = label_colors[label]
+            boxes = []
+            positions = []
+            for b in range(n_bins):
+                data = total_energy[bin_indices == b]
+                if len(data) > 0:
+                    boxes.append(data)
+                    positions.append(b + offsets[m_idx])
+
+            if boxes:
+                bp = ax.boxplot(boxes, positions=positions, widths=box_width,
+                                patch_artist=True, manage_ticks=False,
+                                medianprops=dict(color='k', linewidth=1.2),
+                                whiskerprops=dict(linewidth=0.8),
+                                capprops=dict(linewidth=0.8),
+                                flierprops=dict(marker='.', markersize=5, alpha=0.8,
+                                                markerfacecolor=color, markeredgecolor=color),
+                                boxprops=dict(linewidth=0.8))
+                for patch in bp['boxes']:
+                    patch.set_facecolor(color)
+                    patch.set_alpha(0.7)
+            legend_handles.append(
+                plt.Rectangle((0, 0), 1, 1, facecolor=color, alpha=0.7,
+                               edgecolor='k', linewidth=0.8, label=label)
+            )
+
+        ax.set_xticks(range(n_bins))
+        ax.set_xticklabels(bin_labels, rotation=45, ha='right', fontsize=8)
+        ax.set_xlabel('Realized Tariff (EUR/MWh)')
+        ax.set_ylabel('Total Energy (kWh)')
+        ax.legend(handles=legend_handles)
+        ax.grid(axis='y')
+        ax.set_axisbelow(True)
+        fig.subplots_adjust(left=0.1, right=0.95, top=0.95, bottom=0.18)
+        return fig, ax
+
+    def plot_cumulative_energy_by_price(self, methods=None):
+        """
+        Cumulative energy duration curve: one line per method label, all on one axes.
+
+        Hours are sorted from cheapest to most expensive by realized tariff (same
+        ordering for all methods — same experiment period, same prices).
+        The y-axis shows cumulative total pump energy consumed up to each price rank.
+
+        A price-aggressive schedule (LP) rises steeply at the left (most energy in
+        cheapest hours), then flattens. A risk-averse schedule (RO) rises more linearly.
+
+        A smaller subplot below shows the sorted realized tariff for price context.
+
+        Args:
+            methods:  list of labels to include; None = all labels
+        """
+        all_labels = self.trajectories['label'].unique().tolist()
+        if methods is None:
+            methods = all_labels
+
+        label_to_group = {}
+        for label in methods:
+            row = self.trajectories[self.trajectories['label'] == label]
+            if not row.empty:
+                label_to_group[label] = row['group'].iloc[0]
+        label_colors = build_label_colors(label_to_group)
+
+        has_epanet = any(c.startswith('epanet_energy_') for c in self.trajectories.columns)
+        if has_epanet:
+            energy_cols = [c for c in self.trajectories.columns if c.startswith('epanet_energy_')]
+        else:
+            energy_cols = [c for c in self.trajectories.columns if c.startswith('opt_energy_')]
+
+        # Sort order is shared across all methods (same realized tariff)
+        ref_df = self.trajectories[self.trajectories['label'] == methods[0]].copy()
+        sort_order = np.argsort(ref_df['realized_tariff'].values, kind='stable')
+        sorted_tariff = ref_df['realized_tariff'].values[sort_order]
+        x = np.arange(len(sort_order))
+
+        fig = plt.figure(figsize=(9, 5))
+        gs = GridSpec(2, 1, height_ratios=[3, 1], hspace=0.12, figure=fig)
+        ax_energy = fig.add_subplot(gs[0])
+        ax_tariff = fig.add_subplot(gs[1], sharex=ax_energy)
+
+        for label in methods:
+            df = self.trajectories[self.trajectories['label'] == label]
+            if df.empty:
+                raise ValueError(f"Label '{label}' not found. Available: {all_labels}")
+            color = label_colors[label]
+            total_energy = df[energy_cols].sum(axis=1).values[sort_order]
+            ax_energy.plot(x, np.cumsum(total_energy), color=color, linewidth=1.2, label=label)
+
+        ax_tariff.plot(x, sorted_tariff, color='k', linewidth=1.0)
+        ax_tariff.fill_between(x, sorted_tariff, alpha=0.15, color='k')
+        ax_tariff.set_xlabel('Hours (sorted by increasing price)')
+        ax_tariff.set_ylabel('Tariff\n(€/MWh)')
+        ax_tariff.grid(zorder=0)
+        ax_tariff.set_axisbelow(True)
+        ax_tariff.set_xlim(0, len(x) - 1)
+
+        ax_energy.set_ylabel('Cumulative Energy (kWh)')
+        ax_energy.grid(zorder=0)
+        ax_energy.set_axisbelow(True)
+        ax_energy.set_xlim(0, len(x) - 1)
+        plt.setp(ax_energy.get_xticklabels(), visible=False)
+
+        handles, labels_leg = ax_energy.get_legend_handles_labels()
+        ncol = min(len(handles), 5)
+        nrow = math.ceil(len(handles) / ncol)
+        idx = list(range(len(handles))) + [-1] * (nrow * ncol - len(handles))
+        order = [i for i in np.array(idx).reshape(nrow, ncol).T.flatten() if i >= 0]
+        handles = [handles[i] for i in order]
+        labels_leg = [labels_leg[i] for i in order]
+
+        leg = fig.legend(handles, labels_leg, loc='upper left', bbox_to_anchor=(0.095, 0.96),
+                         bbox_transform=fig.transFigure, ncol=ncol, fontsize=9, framealpha=0.9)
+        for line in leg.get_lines():
+            line.set_linewidth(2.2)
+
+        fig.subplots_adjust(left=0.1, right=0.97, top=0.87, bottom=0.1)
+        return fig, (ax_energy, ax_tariff)
+
+    def plot_duration_curve(self, method):
+        """
+        Energy duration curve for a single method.
+
+        Hours are sorted from cheapest (left) to most expensive (right) by
+        realized tariff. The y-axis shows total EPANET energy consumed in each
+        hour. A price-responsive scheduler produces a downward-sloping curve.
+        The realized tariff is overlaid on a secondary y-axis for reference.
+
+        Args:
+            method: single label string
+        """
+        energy_cols = [c for c in self.trajectories.columns if c.startswith('epanet_energy_')]
+        if not energy_cols:
+            raise ValueError("No epanet_energy_* columns found in trajectories.")
+
+        df = self.trajectories[self.trajectories['label'] == method].copy()
+        df['total_energy'] = df[energy_cols].sum(axis=1)
+        df = df.sort_values('realized_tariff').reset_index(drop=True)
+
+        group = df['group'].iloc[0]
+        color = mcolors.to_rgba(GROUP_STYLES[group]['color'])
+
+        fig, ax1 = plt.subplots(figsize=(9, 4))
+
+        x = np.arange(len(df))
+        ax1.fill_between(x, df['total_energy'], alpha=0.5, color=color, step='mid')
+        ax1.step(x, df['total_energy'], color=color, linewidth=1.0, where='mid', label=method)
+        ax1.set_xlabel('Hours sorted by increasing price')
+        ax1.set_ylabel('Total Energy (kWh)')
+        ax1.set_xlim(0, len(df) - 1)
+        ax1.grid(axis='y', alpha=0.4)
+        ax1.set_axisbelow(True)
+
+        ax2 = ax1.twinx()
+        ax2.plot(x, df['realized_tariff'], color='grey', linestyle='--', alpha=0.7, label='Realized tariff')
+        ax2.set_ylabel('Realized Tariff (EUR/MWh)', color='grey')
+        ax2.tick_params(axis='y', labelcolor='grey')
+
+        lines1, labels1 = ax1.get_legend_handles_labels()
+        lines2, labels2 = ax2.get_legend_handles_labels()
+        ax1.legend(lines1 + lines2, labels1 + labels2, fontsize=8)
+
+        fig.subplots_adjust(left=0.1, right=0.9, top=0.95, bottom=0.12)
+        return fig, ax1, ax2
 
 
 if __name__ == "__main__":
