@@ -303,10 +303,12 @@ def _compute_mpc_metrics(mpc):
     predicted_cost = float((results['predicted_tariff'].values * total_fsp_power).sum()) / 1000
 
     # Constraint violations — summed from per-step columns computed in MPC._record_step
-    viol_col = 'epanet_n_violations' if 'epanet_n_violations' in results.columns else 'opt_n_violations'
-    vvol_col = 'epanet_violated_vol' if 'epanet_violated_vol' in results.columns else 'opt_violated_vol'
-    n_violations = int(results[viol_col].sum())
-    violated_vol = float(results[vvol_col].sum())
+    prefix = 'epanet' if 'epanet_n_min_violations' in results.columns else 'opt'
+    n_min_violations = int(results[f'{prefix}_n_min_violations'].sum())
+    min_violated_vol = float(results[f'{prefix}_min_violated_vol'].sum())
+    n_max_violations = int(results[f'{prefix}_n_max_violations'].sum())
+    max_violated_vol = float(results[f'{prefix}_max_violated_vol'].sum())
+    n_violations = n_min_violations + n_max_violations
     constraint_satisfaction_rate = 1.0 - n_violations / (n_steps * net.n_tanks)
 
     # Forecast MAE over implemented steps
@@ -319,14 +321,17 @@ def _compute_mpc_metrics(mpc):
     demand_mae = float(np.mean(demand_maes))
 
     return {
-        'actual_cost':                 actual_cost,
-        'predicted_cost':              predicted_cost,
-        'n_violations':                n_violations,
-        'violated_vol':                violated_vol,
+        'actual_cost':                  actual_cost,
+        'predicted_cost':               predicted_cost,
+        'n_min_violations':             n_min_violations,
+        'min_violated_vol':             min_violated_vol,
+        'n_max_violations':             n_max_violations,
+        'max_violated_vol':             max_violated_vol,
+        'violated_vol':                 min_violated_vol + max_violated_vol,
         'constraint_satisfaction_rate': constraint_satisfaction_rate,
-        'price_mae':                   price_mae,
-        'demand_mae':                  demand_mae,
-        'n_infeasible':                mpc.n_infeasible,
+        'price_mae':                    price_mae,
+        'demand_mae':                   demand_mae,
+        'n_infeasible':                 mpc.n_infeasible,
     }
 
 
