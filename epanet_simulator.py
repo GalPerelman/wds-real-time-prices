@@ -1,4 +1,6 @@
 import os
+import shutil
+import uuid
 import numpy as np
 import pandas as pd
 from epyt import epanet
@@ -15,7 +17,16 @@ class EPANETSimulator:
         self.prices_col = prices_col
         self.demand_cols = demand_cols
         self.demand_mapping = pd.read_csv(os.path.join(network.data_dir, 'demand_mapping.csv'))
-        self.d = epanet(inp_file)
+
+        # Copy the .inp file to a unique path so parallel instances each get their own
+        # EPyT temp files ({stem}_temp.inp, {stem}_temp.txt) and don't conflict.
+        inp_abs = os.path.abspath(inp_file)
+        inp_dir = os.path.dirname(inp_abs)
+        inp_stem = os.path.splitext(os.path.basename(inp_abs))[0]
+        self._private_inp = os.path.join(inp_dir, f'{inp_stem}_{uuid.uuid4().hex}.inp')
+        shutil.copy2(inp_abs, self._private_inp)
+
+        self.d = epanet(self._private_inp)
 
         # Pumps combination membership matrix: rows = pumps combs, columns = EPANET pump IDs (from pump_* cols)
         pump_cols = self.fsp.columns[self.fsp.columns.str.startswith('pump_')]
@@ -166,11 +177,18 @@ class EPANETSimulator:
         return tank_volumes, energy
 
     def close(self):
-        """Close the hydraulic analysis and unload the EPANET model."""
+        """Close the hydraulic analysis, unload the model, and remove the private .inp copy."""
         if self._is_open:
             self.d.closeHydraulicAnalysis()
             self._is_open = False
         self.d.unload()
+        stem = os.path.splitext(self._private_inp)[0]
+        for path in [self._private_inp, stem + '_temp.inp', stem + '_temp.txt']:
+            try:
+                if os.path.exists(path):
+                    os.remove(path)
+            except OSError:
+                pass
 
     def export(self, path):
         """Save the network with the recorded pump schedule as a new .inp file.
