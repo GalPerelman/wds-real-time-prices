@@ -1,4 +1,5 @@
 import argparse
+import shutil
 from pathlib import Path
 import cvxpy as cp
 import matplotlib.pyplot as plt
@@ -335,7 +336,7 @@ def _compute_mpc_metrics(mpc):
     }
 
 
-def _run_mpc_sweep_from_config(config, dm, uset_estimator):
+def _run_mpc_sweep_from_config(config, dm, uset_estimator, config_path=None):
     exp = config.experiment
     mpc_cfg = exp.mpc
     opts = exp.get('options', {})
@@ -363,6 +364,8 @@ def _run_mpc_sweep_from_config(config, dm, uset_estimator):
 
     if output_dir is not None:
         Path(output_dir).mkdir(parents=True, exist_ok=True)
+        if config_path is not None:
+            shutil.copy2(config_path, f"{output_dir}/{Path(config_path).name}")
 
     sim_cfg = opts.get('simulator')
 
@@ -445,7 +448,7 @@ def run_mpc_sweep(config_path):
     )
     uset_estimator.fit(dm.uncertainty_training_data)
 
-    return _run_mpc_sweep_from_config(config, dm, uset_estimator)
+    return _run_mpc_sweep_from_config(config, dm, uset_estimator, config_path=config_path)
 
 
 def run_from_config(config_path):
@@ -473,7 +476,7 @@ def run_from_config(config_path):
     if exp.type == 'mpc':
         return _run_mpc_from_config(config, dm, uset_estimator)
     elif exp.type == 'mpc_sweep':
-        return _run_mpc_sweep_from_config(config, dm, uset_estimator)
+        return _run_mpc_sweep_from_config(config, dm, uset_estimator, config_path=config_path)
 
     # For static/POR: set up a standalone forecaster for the fixed forecast period
     forecast_start = pd.to_datetime(config.experiment.forecast_period.start)
