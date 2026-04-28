@@ -41,6 +41,7 @@ class MPC:
         self.gamma = kwargs.get("gamma", (2, 5))  # for RO with Budget of Uncertainty
         self.k = kwargs.get("k", 1.5)  # for RO with Budget of Uncertainty
         self.alpha = kwargs.get("alpha", (0.95, 0.80))  # for SP: (alpha_start, alpha_end)
+        self.sp_n_samples = kwargs.get("sp_n_samples", 1000)  # for SP: number of SAA samples
 
         self.t_idx = 0  # counter of time steps from start
         self.current_time = self.start_datetime  # timestamp of the first step
@@ -74,7 +75,7 @@ class MPC:
         elif self.opt_method in ["sp", "SP", "CC", "SAA"]:
             model = SP(network=self.net, t=self.step_horizon, alpha=self.alpha,
                        forecast=self.last_forecast, uset_estimator=self.uset_estimator, milp=self.milp,
-                       final_vol_constraint=self.final_vol_constraint)
+                       final_vol_constraint=self.final_vol_constraint, n=self.sp_n_samples)
         else:
             raise ValueError(f"Unknown optimization method: {self.opt_method}")
 
@@ -195,21 +196,27 @@ class MPC:
             self.simulator.close()
 
     def _compute_violations(self, tank_volumes_dict):
-        n_viol = np.zeros(self.wait, dtype=int)
-        viol_vol = np.zeros(self.wait)
+        n_min_viol = np.zeros(self.wait, dtype=int)
+        min_viol_vol = np.zeros(self.wait)
+        n_max_viol = np.zeros(self.wait, dtype=int)
+        max_viol_vol = np.zeros(self.wait)
         for tank_id, tank_data in self.net.tanks.iterrows():
             vol = tank_volumes_dict[tank_id]
             vol = vol.values if hasattr(vol, 'values') else vol.flatten()
-            n_viol += (vol < tank_data['min_vol']).astype(int) + (vol > tank_data['max_vol']).astype(int)
-            viol_vol += np.maximum(0.0, tank_data['min_vol'] - vol) + np.maximum(0.0, vol - tank_data['max_vol'])
-        return n_viol, viol_vol
+            n_min_viol += (vol < tank_data['min_vol']).astype(int)
+            min_viol_vol += np.maximum(0.0, tank_data['min_vol'] - vol)
+            n_max_viol += (vol > tank_data['max_vol']).astype(int)
+            max_viol_vol += np.maximum(0.0, vol - tank_data['max_vol'])
+        return n_min_viol, min_viol_vol, n_max_viol, max_viol_vol
 
     def _record_step(self, realization, x_fsp, x_vsp, opt_tank_volumes, epanet_volumes, epanet_energy):
-        opt_n_viol, opt_viol_vol = self._compute_violations(opt_tank_volumes)
-        epanet_n_viol, epanet_viol_vol = (
-            self._compute_violations({tid: epanet_volumes[tid] for tid in self.net.tanks.index})
-            if epanet_volumes is not None else (None, None)
-        )
+        opt_n_min_viol, opt_min_viol_vol, opt_n_max_viol, opt_max_viol_vol = \
+            self._compute_violations(opt_tank_volumes)
+        if epanet_volumes is not None:
+            epanet_n_min_viol, epanet_min_viol_vol, epanet_n_max_viol, epanet_max_viol_vol = \
+                self._compute_violations({tid: epanet_volumes[tid] for tid in self.net.tanks.index})
+        else:
+            epanet_n_min_viol = epanet_min_viol_vol = epanet_n_max_viol = epanet_max_viol_vol = None
         return pd.DataFrame({
             "idx": np.repeat(self.t_idx, self.wait),
             "time": realization.index,
@@ -226,8 +233,10 @@ class MPC:
                for tank_id in self.net.tanks.index},
             **{f"opt_energy_{combo}": x_fsp[:, i] * self.net.fsp.loc[combo, 'power']
                for i, combo in enumerate(self.net.fsp.index)},
-            "opt_n_violations": opt_n_viol,
-            "opt_violated_vol": opt_viol_vol,
+            "opt_n_min_violations": opt_n_min_viol,
+            "opt_min_violated_vol": opt_min_viol_vol,
+            "opt_n_max_violations": opt_n_max_viol,
+            "opt_max_violated_vol": opt_max_viol_vol,
             **(
                 {f"epanet_vol_tank_{tank_id}": epanet_volumes[tank_id].values
                  for tank_id in self.net.tanks.index}
@@ -244,8 +253,13 @@ class MPC:
                 if epanet_energy is not None else {}
             ),
             **(
-                {"epanet_n_violations": epanet_n_viol, "epanet_violated_vol": epanet_viol_vol}
-                if epanet_n_viol is not None else {}
+                {
+                    "epanet_n_min_violations": epanet_n_min_viol,
+                    "epanet_min_violated_vol": epanet_min_viol_vol,
+                    "epanet_n_max_violations": epanet_n_max_viol,
+                    "epanet_max_violated_vol": epanet_max_viol_vol,
+                }
+                if epanet_n_min_viol is not None else {}
             ),
         })
 
