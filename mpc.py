@@ -132,6 +132,8 @@ class MPC:
             self.opt_model.apply_forecast()
             self.opt_model.formulate(start_hour=self.current_time.hour)
             status, cost = self.opt_model.solve()
+            solver_time = self.opt_model.solve_time
+            solver_mip_gap = self.opt_model.solver_mip_gap
 
             if status not in cp.settings.SOLUTION_PRESENT:
                 self.n_infeasible += 1
@@ -177,7 +179,7 @@ class MPC:
                 for tank_id in self.net.tanks.index:
                     self.net.tanks.loc[tank_id, 'init_vol'] = opt_tank_volumes[tank_id][-1]
 
-            df = self._record_step(realization, x_fsp, x_vsp, opt_tank_volumes, epanet_volumes, epanet_energy, record_status)
+            df = self._record_step(realization, x_fsp, x_vsp, opt_tank_volumes, epanet_volumes, epanet_energy, record_status, solver_time, solver_mip_gap)
             self.results = pd.concat([self.results, df], ignore_index=True)
             self.t_idx += 1
 
@@ -210,7 +212,7 @@ class MPC:
             max_viol_vol += np.maximum(0.0, vol - tank_data['max_vol'])
         return n_min_viol, min_viol_vol, n_max_viol, max_viol_vol
 
-    def _record_step(self, realization, x_fsp, x_vsp, opt_tank_volumes, epanet_volumes, epanet_energy, opt_status):
+    def _record_step(self, realization, x_fsp, x_vsp, opt_tank_volumes, epanet_volumes, epanet_energy, opt_status, solver_time, solver_mip_gap):
         opt_n_min_viol, opt_min_viol_vol, opt_n_max_viol, opt_max_viol_vol = \
             self._compute_violations(opt_tank_volumes)
         if epanet_volumes is not None:
@@ -222,6 +224,8 @@ class MPC:
             "idx": np.repeat(self.t_idx, self.wait),
             "time": realization.index,
             "opt_status": np.repeat(opt_status, self.wait),
+            "solver_time": np.repeat(solver_time, self.wait),
+            "solver_mip_gap": np.repeat(solver_mip_gap, self.wait),
             **{f"x_fsp_{i}": x_fsp[:, i] for i in range(self.net.n_fsp)},
             **{f"x_vsp_{i}": x_vsp[:, i] for i in range(self.net.n_vsp)},
             "predicted_tariff": self.last_forecast.loc[realization.index, 'tariff'].values[:self.wait],
