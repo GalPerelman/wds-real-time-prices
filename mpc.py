@@ -42,6 +42,7 @@ class MPC:
         self.k = kwargs.get("k", 1.5)  # for RO with Budget of Uncertainty
         self.alpha = kwargs.get("alpha", (0.95, 0.80))  # for SP: (alpha_start, alpha_end)
         self.sp_n_samples = kwargs.get("sp_n_samples", 1000)  # for SP: number of SAA samples
+        self.sp_sampling_method = kwargs.get("sampling_method", "normal")  # for SP: scenario distribution
 
         self.t_idx = 0  # counter of time steps from start
         self.current_time = self.start_datetime  # timestamp of the first step
@@ -75,7 +76,8 @@ class MPC:
         elif self.opt_method in ["sp", "SP", "CC", "SAA"]:
             model = SP(network=self.net, t=self.step_horizon, alpha=self.alpha,
                        forecast=self.last_forecast, uset_estimator=self.uset_estimator, milp=self.milp,
-                       final_vol_constraint=self.final_vol_constraint, n=self.sp_n_samples)
+                       final_vol_constraint=self.final_vol_constraint, n=self.sp_n_samples,
+                       sampling_method=self.sp_sampling_method)
         else:
             raise ValueError(f"Unknown optimization method: {self.opt_method}")
 
@@ -167,11 +169,8 @@ class MPC:
             if self.simulator is not None:
                 x_fsp_df = pd.DataFrame(x_fsp, columns=self.net.fsp.index)
                 epanet_volumes, epanet_energy = self.simulator.step(x_fsp_df, self.wait)
-                for tank_id, tank_data in self.net.tanks.iterrows():
-                    true_vol = epanet_volumes.iloc[-1][tank_id]
-                    # Min violations propagate: optimizer sees the true depleted state and must recover.
-                    # Max violations clamp to max_vol: spills reset to the feasible ceiling.
-                    self.net.tanks.loc[tank_id, 'init_vol'] = min(true_vol, tank_data['max_vol'])
+                for tank_id in self.net.tanks.index:
+                    self.net.tanks.loc[tank_id, 'init_vol'] = epanet_volumes.iloc[-1][tank_id]
             else:
                 epanet_volumes = None
                 epanet_energy = None

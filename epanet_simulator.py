@@ -9,9 +9,7 @@ import graphs
 
 
 class EPANETSimulator:
-    MAX_VOL_MARGIN_M = 5.0  # fixed upper margin (m); large enough to never limit max violation observation
-
-    def __init__(self, network, inp_file, prices_col, demand_cols, min_vol_margin_m=1.0):
+    def __init__(self, network, inp_file, prices_col, demand_cols, min_vol_margin_m=1.0, max_vol_margin_m=0.5):
         self.tanks = network.tanks
         self.fsp = network.fsp
         self.prices_col = prices_col
@@ -52,6 +50,7 @@ class EPANETSimulator:
         )
 
         self.min_vol_margin_m = min_vol_margin_m
+        self.max_vol_margin_m = max_vol_margin_m
         self._is_open = False
         self._elapsed_h = 0.0
         self._recorded_schedule = pd.DataFrame(columns=self.fsp.index)
@@ -104,7 +103,7 @@ class EPANETSimulator:
             init_vol = (self.tanks.loc[tank_id, 'init_vol'] - base_vols[i]) / area + base_levels[i]
             self.d.setNodeTankInitialLevel(idx, init_vol)
             self.d.setNodeTankMinimumWaterLevel(idx, max(0.0, real_min_level - self.min_vol_margin_m))
-            self.d.setNodeTankMaximumWaterLevel(idx, real_max_level + self.MAX_VOL_MARGIN_M)
+            self.d.setNodeTankMaximumWaterLevel(idx, real_max_level + self.max_vol_margin_m)
 
         # Set simulation duration to cover the full realization horizon, then open hydraulic analysis
         self.d.setTimeSimulationDuration(len(realizations) * 3600)

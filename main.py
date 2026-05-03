@@ -212,7 +212,7 @@ def run_static_optimization(model_class, forecast, uset_estimator, net_path='dat
     if status not in cp.settings.SOLUTION_PRESENT:
         return None
 
-    sim = Simulation(model, sampling_method="normal", n=n_sim)
+    sim = Simulation(model, sampling_method=model_params.get('sampling_method', 'normal'), n=n_sim)
     violation_rate = sim.summarize()
 
     result = {
@@ -377,6 +377,7 @@ def _run_mpc_sweep_from_config(config, dm, uset_estimator, config_path=None):
                 prices_col=config.columns.prices_col,
                 demand_cols=config.columns.demand_cols,
                 min_vol_margin_m=sim_cfg['min_vol_margin_m'],
+                max_vol_margin_m=sim_cfg['max_vol_margin_m'],
             )
 
         print(f"  [{label}] running...")
@@ -546,6 +547,7 @@ def _run_por_from_config(config, dm, forecaster, uset_estimator):
         n=exp.get('simulation', {}).get('n_samples', 500),
         milp=opts.get('milp', True),
         plot=opts.get('plot', True),
+        sampling_method=opts.get('sampling_method', 'normal'),
         omega_to_alpha=opts.get('omega_to_alpha', 'gaussian'),
         stat_analyze=opts.get('stat_analyze', True),
         final_vol_constraint=opts.get('final_vol_constraint', True),
@@ -568,6 +570,7 @@ def _run_mpc_from_config(config, dm, uset_estimator):
             prices_col=config.columns.prices_col,
             demand_cols=config.columns.demand_cols,
             min_vol_margin_m=sim_cfg['min_vol_margin_m'],
+            max_vol_margin_m=sim_cfg['max_vol_margin_m'],
         )
 
     return run_mpc_experiment(

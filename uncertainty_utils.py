@@ -446,6 +446,8 @@ class Sampler:
             return self.draw_gaussian_sample()
         if sampling_method in ['uniform']:
             return self.draw_uniform_sample()
+        if sampling_method in ['lognormal', 'log_normal', 'log']:
+            return self.draw_lognormal_sample()
 
     def draw_gaussian_sample(self):
         # Identify indices where mu is not zero
@@ -467,6 +469,34 @@ class Sampler:
         high = self.mu + n_std * std_full
         sample = self.rng.uniform(low=low, high=high, size=(self.n, len(low))).T
         return sample
+
+    def draw_lognormal_sample(self):
+        """
+        Draw samples from a multivariate log-normal distribution.
+
+        Moment-matched to self.mu so that E[sample_i] = mu_i (consistent with the
+        forecast), while producing a right-skewed tail that better captures price
+        and demand spikes than a Gaussian.
+
+        Log-space parameters are derived analytically from price-space (mu, Sigma):
+            Sigma_log[i,j] = log(1 + Sigma[i,j] / (mu_i * mu_j))
+            mu_log[i]      = log(mu_i) - Sigma_log[i,i] / 2
+
+        The subtraction of Sigma_log[i,i]/2 in mu_log is the moment-matching
+        correction: for X ~ LogNormal(m, s^2), E[X] = exp(m + s^2/2), so setting
+        m = log(mu) - s^2/2 ensures E[X] = mu.
+        """
+        mu_safe = np.maximum(self.mu, 1e-6)
+        # Clamp argument to log: when mu is near-zero, cov[i,j] / (mu_i*mu_j) can push
+        # 1+x negative, making log undefined. Floor to 1e-8; eigh+eigenvalue flooring
+        # then projects the result to the nearest valid PSD matrix.
+        sigma_log = np.log(np.maximum(1 + self.cov / np.outer(mu_safe, mu_safe), 1e-8))
+        sigma_log = (sigma_log + sigma_log.T) / 2                  # enforce exact symmetry
+        w, V = np.linalg.eigh(sigma_log)
+        sigma_log = (V * np.maximum(w, 1e-10)) @ V.T               # floor tiny negative eigenvalues
+        mu_log = np.log(mu_safe) - np.diag(sigma_log) / 2          # moment-matching correction
+        log_samples = self.rng.multivariate_normal(mu_log, sigma_log, size=self.n).T
+        return np.exp(log_samples)
 
     @staticmethod
     def generate_shared_sample(mu, cov, n: int, sampling_method: str = 'normal', seed: int = 42,
@@ -510,6 +540,15 @@ class Sampler:
             low = mu - 3 * std_full
             high = mu + 3 * std_full
             return rng.uniform(low=low, high=high, size=(n, len(low))).T
+        elif sampling_method in ['lognormal', 'log_normal', 'log']:
+            mu_safe = np.maximum(mu, 1e-6)
+            sigma_log = np.log(np.maximum(1 + cov / np.outer(mu_safe, mu_safe), 1e-8))
+            sigma_log = (sigma_log + sigma_log.T) / 2
+            w, V = np.linalg.eigh(sigma_log)
+            sigma_log = (V * np.maximum(w, 1e-10)) @ V.T
+            mu_log = np.log(mu_safe) - np.diag(sigma_log) / 2
+            log_samples = rng.multivariate_normal(mu_log, sigma_log, size=n).T
+            return np.exp(log_samples)
         else:
             raise ValueError(f"Unknown sampling method: {sampling_method}")
 
