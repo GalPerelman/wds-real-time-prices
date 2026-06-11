@@ -664,6 +664,11 @@ class SP(BaseOptModel):
         if start_hour is None:
             start_hour = self.forecast.index[0].hour
         self.get_ellipsoid_uncertainty_set(start_hour=start_hour)
+        # Replace historical seasonal mean with forecast so scenarios are forecast-centered.
+        # Variables stacked as [var0@t0..T-1, var1@t0..T-1, ...] matching uset_estimator.variables_.
+        if self._shared_sample is None:
+            self.mu = np.concatenate([self.forecast[var].values[:self.t]
+                                      for var in self.uset_estimator.variables_])
 
         # update the sampler with every formulation call - ensure consistency with start hour
         self.update_sampler()
