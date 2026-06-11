@@ -569,8 +569,6 @@ def _run_mpc_from_config(config, dm, uset_estimator):
             inp_file=sim_cfg['inp_file'],
             prices_col=config.columns.prices_col,
             demand_cols=config.columns.demand_cols,
-            min_vol_margin_m=sim_cfg['min_vol_margin_m'],
-            max_vol_margin_m=sim_cfg['max_vol_margin_m'],
         )
 
     return run_mpc_experiment(

@@ -67,5 +67,3 @@ experiment:
     final_vol_constraint: false
     simulator:
       inp_file: "data/multi_tank/multi_tank.inp"
-      min_vol_margin_m: 1.0  # relaxed EPANET min bounds (m); must be < real_min_level for all tanks
-      max_vol_margin_m: 0.5  # relaxed EPANET max bounds (m); allows over-fill to propagate as init_vol
