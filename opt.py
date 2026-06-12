@@ -547,40 +547,49 @@ class RO(BaseOptModel):
 
 class SP(BaseOptModel):
     """
-    Stochastic Optimization with Sample Average Approximation (SAA) and Chance Constraints.
+    Stochastic Programming with SAA objective, chance constraints, and optional CVaR risk term.
+
+    Core formulation
+    ----------------
+    min  E[cost]  +  lambda_cvar * CVaR(cost)
+    s.t. Pr(vol_t >= min_vol) >= alpha_t   for all tanks and time steps
+
+    The chance constraints tighten tank bounds by z(alpha_t) * sigma_demand
+
+    The SAA objective offers two options:
+    Objective options (controlled by parameters below)
+    ---------------------------------------------------
+    1. SAA only (default, lambda_cvar=0):
+           min  (1/N) sum_i cost_i
+
+    2. SAA + CVaR (lambda_cvar > 0):
+           min  E[cost]  +  lambda_cvar * CVaR_{alpha_start}(cost)
+       LP reformulation via auxiliary variables eta, s.
+
+    The quantile objective (objective_quantile) is an alternative to the SAA path entirely.
 
     Parameters
     ----------
     alpha : tuple (alpha_start, alpha_end)
-        Confidence levels for chance constraints.
-        - alpha_start: confidence at t=0 (e.g., 0.95 = 95% probability of satisfaction)
-        - alpha_end: confidence at t=T-1 (e.g., 0.90), must be <= alpha_start
-        Lower alpha_end = more relaxed constraints at far horizons.
-
-    The confidence level interpolates linearly:
-        alpha_t = alpha_start + t * (alpha_end - alpha_start) / (T - 1)
-
-    For constant confidence (no temporal decay), use alpha_start == alpha_end.
-
+        Confidence levels for chance constraints and CVaR.
+        alpha_start: level at t=0; alpha_end: level at t=T-1 (must be <= alpha_start).
+        Use alpha_start == alpha_end for constant confidence across the horizon.
+    lambda_cvar : float, optional (default 0.0)
+        Weight on CVaR tail-risk term. Zero reduces to pure SAA.
+    objective_quantile : float in (0,1), optional
+        If set, replaces the SAA objective with a quantile-based objective (ignores lambda_cvar).
     sample : np.ndarray, optional
-        Pre-generated sample array of shape (p, n) to use for SAA objective.
-        If provided, this sample is used instead of generating a new one.
-
-        Usage cases:
-        - POR experiments: Pass a shared sample to ensure all methods (LP, RO, SP) are
-          optimized and evaluated against identical scenarios. This guarantees fair
-          comparison and monotonic cost-reliability tradeoffs.
-        - MPC framework: Leave as None to generate fresh samples at each formulation call.
-          This ensures samples are consistent with the current start hour's mu and Sigma,
-          which change as the rolling horizon advances through different times of day.
+        Pre-generated sample of shape (p, n). When provided (POR experiments), all methods
+        share identical scenarios for fair comparison. When None (MPC), fresh samples are
+        drawn at each formulation call using the forecast-centered mu and rotated Sigma.
     """
-
-    def __init__(self, network, t, alpha, objective_quantile=None, sampling_method="normal", n=1000,
-                 sample=None, **kwargs):
+    def __init__(self, network, t, alpha, lambda_cvar=0.0,
+                 objective_quantile=None, sampling_method="normal", n=1000, sample=None, **kwargs):
         super().__init__(network, t, **kwargs)
 
         # Unpack alpha tuple
         self.alpha_start, self.alpha_end = alpha
+        self.lambda_cvar = lambda_cvar
         self.objective_quantile = objective_quantile
         self.n = n  # number of samples
         self.sampling_method = sampling_method
@@ -676,16 +685,26 @@ class SP(BaseOptModel):
         a, b, c_nominal = self.construct_nominal_matrix()
         self.x = cp.Variable(self.n_var * self.t, boolean=self.get_bool_vector())
 
-        ######  Building the stochstic objective  ########
+        ######  Building the stochastic objective  ########
         # The below functions build the objective coefficients:
         # multiply the pumps power by the sampled tariffs
         # repeat the same price for all pumps for every time step
         # c_all_sample is the matrix of objective coefficients for all samples - can be used for expected objective
         # c_quantile is the vector of objective coefficients for the quantile-based objective
+        cvar_constraints = []
         if self.objective_quantile is None:
             # SAA objective - based on average of all samples
             c_all_sample = self.sample_objective()
-            obj = (1 / self.n) * cp.sum(c_all_sample.T @ self.x)
+            cost_scenarios = c_all_sample.T @ self.x  # shape (n,): cost per scenario
+            obj = (1 / self.n) * cp.sum(cost_scenarios)
+
+            # Optional CVaR term: lambda_cvar * CVaR_{alpha_start}(cost)
+            # LP reformulation via Rockafellar-Uryasev: CVaR = eta + 1/((1-alpha)*N) * sum(s)
+            self.eta_cvar = cp.Variable()
+            self.s_cvar = cp.Variable(self.n, nonneg=True)
+            cvar = self.eta_cvar + (1 / ((1 - self.alpha_start) * self.n)) * cp.sum(self.s_cvar)
+            obj = obj + self.lambda_cvar * cvar
+            cvar_constraints = [self.s_cvar >= cost_scenarios - self.eta_cvar]
         else:
             c_quantile = self.quantile_objective()
             obj = cp.sum(c_quantile.T @ self.x)
@@ -738,7 +757,7 @@ class SP(BaseOptModel):
 
         # safe RHS for each constraint
         b_safe = b[:m * 2] - z * sigma_rhs  # shape (2m,)
-        constraints = [a[:m * 2, :] @ self.x <= b_safe, a[m * 2:, :] @ self.x <= b[m * 2:]]
+        constraints = cvar_constraints + [a[:m * 2, :] @ self.x <= b_safe, a[m * 2:, :] @ self.x <= b[m * 2:]]
 
         self.problem = cp.Problem(cp.Minimize(obj), constraints)
 
