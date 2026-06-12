@@ -43,6 +43,7 @@ class MPC:
         self.alpha = kwargs.get("alpha", (0.95, 0.80))  # for SP: (alpha_start, alpha_end)
         self.sp_n_samples = kwargs.get("sp_n_samples", 1000)  # for SP: number of SAA samples
         self.sp_sampling_method = kwargs.get("sampling_method", "normal")  # for SP: scenario distribution
+        self.lambda_cvar = kwargs.get("lambda_cvar", 0.0)  # for SP: CVaR risk weight (0 = pure SAA)
 
         self.t_idx = 0  # counter of time steps from start
         self.current_time = self.start_datetime  # timestamp of the first step
@@ -74,7 +75,7 @@ class MPC:
                        forecast=self.last_forecast, uset_estimator=self.uset_estimator, milp=self.milp,
                        uncertainty_set=self.u_set, final_vol_constraint=self.final_vol_constraint)
         elif self.opt_method in ["sp", "SP", "CC", "SAA"]:
-            model = SP(network=self.net, t=self.step_horizon, alpha=self.alpha,
+            model = SP(network=self.net, t=self.step_horizon, alpha=self.alpha, lambda_cvar=self.lambda_cvar,
                        forecast=self.last_forecast, uset_estimator=self.uset_estimator, milp=self.milp,
                        final_vol_constraint=self.final_vol_constraint, n=self.sp_n_samples,
                        sampling_method=self.sp_sampling_method)
