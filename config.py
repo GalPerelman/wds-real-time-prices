@@ -2,6 +2,7 @@
 Simple YAML Configuration for WDS Optimization Experiments
 """
 
+from itertools import product
 from pathlib import Path
 import yaml
 
@@ -66,14 +67,17 @@ def expand_methods(methods):
         sweep = m.get('sweep')
 
         if sweep:
-            for param_name, values in sweep.items():
-                for val in values:
-                    expanded.append({
-                        'label':      f'{opt_method.upper()}_{param_name}={val}',
-                        'group':      group,
-                        'opt_method': opt_method,
-                        'params':     {**base_params, param_name: val}
-                    })
+            param_names = list(sweep.keys())
+            param_values = list(sweep.values())
+            for combo in product(*param_values):
+                params = {**base_params, **dict(zip(param_names, combo))}
+                label_parts = '|'.join(f'{k}={v}' for k, v in zip(param_names, combo))
+                expanded.append({
+                    'label':      f'{opt_method.upper()}_{label_parts}',
+                    'group':      group,
+                    'opt_method': opt_method,
+                    'params':     params,
+                })
         else:
             expanded.append({
                 'label':      m.get('label', group),

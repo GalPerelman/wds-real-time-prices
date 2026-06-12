@@ -28,15 +28,42 @@ GROUP_STYLES = {
 }
 
 
+
 def to_latex_label(s):
-    prefix, rest = s.split('_', 1)  # "RO", "omega=1"
-    var, val = rest.split('=')  # "omega", "1"
+    try:
+        prefix, rest = s.split('_', 1)  # "RO", "omega=1" or "alpha=[0.95, 0.9]|lambda_cvar=0.5"
+    except ValueError:
+        if s.lower() == 'lp':
+            return "PTO"
+        return s  # no underscore, return as-is
 
-    # capitalize Greek letter if needed
-    if var.lower() == 'omega':
-        var = r'\Omega'
+    if prefix == 'SP':
+        prefix = 'CCOPT'
 
-    return rf"${prefix}_{{{var}={val}}}$"
+    # multi-param sweeps join "var=val" segments with '|' (see config.expand_methods)
+    parts = []
+    for segment in rest.split('|'):
+        var, val = segment.split('=')  # "omega", "1"
+        try:
+            a, b = val.strip('[').strip(']').split(',')
+            if a == b.strip(' '):
+                val = a
+        except ValueError:
+            pass
+
+        # capitalize Greek letter if needed
+        if var.lower() == 'omega':
+            var = r'\Omega'
+        elif var.lower() == 'alpha':
+            var = r'\alpha'
+        elif var.lower() == 'gamma':
+            var = r'\Gamma'
+        elif var.lower() == 'lambda_cvar':
+            var = r'\lambda'
+
+        parts.append(f"{var}={val}")
+
+    return rf"${prefix}_{{{', '.join(parts)}}}$"
 
 
 def build_label_colors(label_to_group):
