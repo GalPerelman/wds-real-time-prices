@@ -14,8 +14,8 @@ import forecast
 
 class MPC:
     def __init__(self, net_path, opt_method, db, uset_estimator, start_datetime, step_horizon, wait, experiment_horizon,
-                 realizations, prices_col, demand_cols, forecast_method="xgb", forecast_params=None,
-                 milp=True, holiday_country='HU', simulator=None, final_vol_constraint=True, **kwargs):
+                 realizations, prices_col, demand_cols, forecast_method, milp, holiday_country, final_vol_constraint,
+                 forecast_params=None, simulator=None, **kwargs):
         self.net_path = net_path
         self.opt_method = opt_method
         self.db = db
@@ -36,13 +36,13 @@ class MPC:
         self.buffer = forecast.RealizationsBuffer(self.db.forecast_training_data)
 
         # different parameters for different optimization methods
-        self.u_set = kwargs.get("uncertainty_set", "ellipsoid")
-        self.omega = kwargs.get("omega", 1)  # for RO with Ellipsoidal Uncertainty
-        self.gamma = kwargs.get("gamma", (2, 5))  # for RO with Budget of Uncertainty
+        self.u_set = kwargs.get("uncertainty_set", None)  # required for RO; None errors loudly if unset
+        self.omega = kwargs.get("omega", None)  # for RO with Ellipsoidal Uncertainty
+        self.gamma = kwargs.get("gamma", None)  # for RO with Budget of Uncertainty
         self.k = kwargs.get("k", 1.5)  # for RO with Budget of Uncertainty
-        self.alpha = kwargs.get("alpha", (0.95, 0.80))  # for SP: (alpha_start, alpha_end)
-        self.sp_n_samples = kwargs.get("sp_n_samples", 1000)  # for SP: number of SAA samples
-        self.sp_sampling_method = kwargs.get("sampling_method", "normal")  # for SP: scenario distribution
+        self.alpha = kwargs.get("alpha", None)  # required for SP: (alpha_start, alpha_end); None errors loudly if unset
+        self.sp_n_samples = kwargs.get("sp_n_samples", None)  # for SP: number of SAA samples
+        self.sp_sampling_method = kwargs.get("sampling_method", None)  # for SP: scenario distribution
         self.lambda_cvar = kwargs.get("lambda_cvar", 0.0)  # for SP: CVaR risk weight (0 = pure SAA)
 
         self.t_idx = 0  # counter of time steps from start

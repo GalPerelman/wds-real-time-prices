@@ -402,14 +402,14 @@ def _run_mpc_sweep_from_config(config, dm, uset_estimator, config_path=None):
         prices_col=config.columns.prices_col,
         demand_cols=config.columns.demand_cols,
         start_datetime=pd.to_datetime(exp.experiment_period.start),
-        step_horizon=mpc_cfg.get('step_horizon', 24),
-        wait=mpc_cfg.get('wait', 1),
+        step_horizon=mpc_cfg.step_horizon,
+        wait=mpc_cfg.wait,
         experiment_horizon=exp.experiment_period.horizon,
-        forecast_method=config.forecast.get('model', 'xgb'),
+        forecast_method=config.forecast.model,
         forecast_params=config.forecast.get('params', {}),
         net_path=config.data.network_path,
-        milp=opts.get('milp', True),
-        holiday_country=config.forecast.get('holiday_country', 'HU'),
+        milp=opts['milp'],
+        holiday_country=config.forecast.holiday_country,
         plot=False,
     )
 
@@ -569,14 +569,14 @@ def run_from_config(config_path):
         last_midnight = last_midnight.tz_localize(dm.data.index.tz)
     buffer = forecast.RealizationsBuffer(dm.data.loc[:last_midnight])
 
-    forecast_model = config.forecast.get('model', 'xgb')
+    forecast_model = config.forecast.model
     forecast_params = config.forecast.get('params', {})
     forecaster = train_forecaster(
         training_data=dm.forecast_training_data,
         prices_col=config.columns.prices_col,
         demand_cols=config.columns.demand_cols,
         model_name=forecast_model,
-        holiday_country=config.forecast.get('holiday_country', 'HU'),
+        holiday_country=config.forecast.holiday_country,
         buffer=buffer,
         **forecast_params
     )
@@ -600,7 +600,7 @@ def _run_static_from_config(config, forecaster, uset_estimator):
         exp.forecast_period.start,
         exp.forecast_period.end
     )
-    model_class = cfg.get_model_class(exp.model.get('opt_method', 'lp'))
+    model_class = cfg.get_model_class(exp.model.opt_method)
     opts = exp.get('options', {})
 
     return run_static_optimization(
@@ -608,10 +608,10 @@ def _run_static_from_config(config, forecaster, uset_estimator):
         forecast=forecast_df,
         uset_estimator=uset_estimator,
         net_path=config.data.network_path,
-        t=opts.get('t', 24),
-        n_sim=exp.get('simulation', {}).get('n_samples', 500),
-        milp=opts.get('milp', True),
-        plot=opts.get('plot', True),
+        t=opts['t'],
+        n_sim=exp['simulation']['n_samples'],
+        milp=opts['milp'],
+        plot=opts['plot'],
         final_vol_constraint=opts.get('final_vol_constraint', True),
         **exp.model.get('params', {})
     )
@@ -632,10 +632,10 @@ def _run_por_from_config(config, dm, forecaster, uset_estimator):
         forecast=forecast_df,
         methods=methods,
         net_path=config.data.network_path,
-        t=opts.get('t', 24),
-        n=exp.get('simulation', {}).get('n_samples', 500),
-        milp=opts.get('milp', True),
-        plot=opts.get('plot', True),
+        t=opts['t'],
+        n=exp['simulation']['n_samples'],
+        milp=opts['milp'],
+        plot=opts['plot'],
         sampling_method=opts.get('sampling_method', 'normal'),
         omega_to_alpha=opts.get('omega_to_alpha', 'gaussian'),
         stat_analyze=opts.get('stat_analyze', True),
@@ -666,17 +666,17 @@ def _run_mpc_from_config(config, dm, uset_estimator):
         realizations=dm.data,
         prices_col=config.columns.prices_col,
         demand_cols=config.columns.demand_cols,
-        opt_method=mpc_cfg.get('opt_method', 'lp'),
+        opt_method=mpc_cfg.opt_method,
         start_datetime=pd.to_datetime(exp.experiment_period.start),
-        step_horizon=mpc_cfg.get('step_horizon', 24),
-        wait=mpc_cfg.get('wait', 1),
+        step_horizon=mpc_cfg.step_horizon,
+        wait=mpc_cfg.wait,
         experiment_horizon=exp.experiment_period.horizon,
-        forecast_method=config.forecast.get('model', 'xgb'),
+        forecast_method=config.forecast.model,
         forecast_params=config.forecast.get('params', {}),
         net_path=config.data.network_path,
-        milp=opts.get('milp', True),
-        plot=opts.get('plot', True),
-        holiday_country=config.forecast.get('holiday_country', 'HU'),
+        milp=opts['milp'],
+        plot=opts['plot'],
+        holiday_country=config.forecast.holiday_country,
         final_vol_constraint=opts.get('final_vol_constraint', True),
         **exp.get('model_params', {})
     )

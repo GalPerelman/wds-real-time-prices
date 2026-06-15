@@ -62,7 +62,7 @@ def expand_methods(methods):
     expanded = []
     for m in methods:
         group = m.get('group', m.get('label', 'method'))
-        opt_method = m.get('opt_method', 'lp')
+        opt_method = m['opt_method']
         base_params = m.get('params', {})
         sweep = m.get('sweep')
 
