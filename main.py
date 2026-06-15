@@ -17,6 +17,7 @@ from opt import BaseOptModel, RO, SP, Simulation
 from mpc import MPC
 from epanet_simulator import EPANETSimulator
 
+from concurrent.futures import ProcessPoolExecutor
 from typing import Dict, List, Any, Optional
 from itertools import product
 
@@ -348,6 +349,47 @@ def _compute_mpc_metrics(mpc):
 
     return _compute_metrics_from_df(results, net, n_infeasible=mpc.n_infeasible)
 
+
+def _run_method_worker(worker_args):
+    """Module-level worker for parallel MPC sweep. Must be at module level for Windows multiprocessing."""
+    method = worker_args['method']
+    common_kwargs = worker_args['common_kwargs']
+    sim_cfg = worker_args['sim_cfg']
+    network_path = worker_args['network_path']
+    prices_col = worker_args['prices_col']
+    demand_cols = worker_args['demand_cols']
+    final_vol_constraint = worker_args['final_vol_constraint']
+
+    label = method['label']
+    opt_method = method['opt_method']
+    params = method.get('params', {})
+    group = method.get('group', label)
+
+    simulator = None
+    if sim_cfg:
+        sim_net = LPNetwork(network_path)
+        simulator = EPANETSimulator(
+            network=sim_net,
+            inp_file=sim_cfg['inp_file'],
+            prices_col=prices_col,
+            demand_cols=demand_cols,
+        )
+
+    print(f"  [{label}] running...")
+    mpc = run_mpc_experiment(opt_method=opt_method, simulator=simulator,
+                             final_vol_constraint=final_vol_constraint,
+                             **common_kwargs, **params)
+    mpc_metrics = _compute_mpc_metrics(mpc)
+
+    traj = mpc.results.copy()
+    traj['model'] = opt_method
+    traj['label'] = label
+    traj['group'] = group
+
+    return {'label': label, 'group': group, 'opt_method': opt_method,
+            'params': params, 'metrics': mpc_metrics, 'trajectory': traj}
+
+
 def _run_mpc_sweep_from_config(config, dm, uset_estimator, config_path=None):
     exp = config.experiment
     mpc_cfg = exp.mpc
@@ -380,48 +422,74 @@ def _run_mpc_sweep_from_config(config, dm, uset_estimator, config_path=None):
             shutil.copy2(config_path, f"{output_dir}/{Path(config_path).name}")
 
     sim_cfg = opts.get('simulator')
+    n_workers = opts.get('n_workers', 1)
 
     methods = cfg.expand_methods(exp.methods)
     rows = []
     trajectory_parts = []
-    for method in methods:
-        label = method['label']
-        opt_method = method['opt_method']
-        params = method.get('params', {})
 
-        simulator = None
-        if sim_cfg:
-            sim_net = LPNetwork(config.data.network_path)
-            simulator = EPANETSimulator(
-                network=sim_net,
-                inp_file=sim_cfg['inp_file'],
-                prices_col=config.columns.prices_col,
-                demand_cols=config.columns.demand_cols,
-                min_vol_margin_m=sim_cfg['min_vol_margin_m'],
-                max_vol_margin_m=sim_cfg['max_vol_margin_m'],
-            )
+    if n_workers > 1:
+        # Workers return data only — all file writes happen in the main process after map() completes.
+        # Intermediate per-method saves are skipped; outputs are written once at the end.
+        worker_args = [
+            {
+                'method': method,
+                'common_kwargs': common_kwargs,
+                'sim_cfg': sim_cfg,
+                'network_path': config.data.network_path,
+                'prices_col': config.columns.prices_col,
+                'demand_cols': config.columns.demand_cols,
+                'final_vol_constraint': opts.get('final_vol_constraint', True),
+            }
+            for method in methods
+        ]
+        with ProcessPoolExecutor(max_workers=n_workers) as executor:
+            for result in executor.map(_run_method_worker, worker_args):
+                rows.append({'label': result['label'], 'group': result['group'],
+                             'opt_method': result['opt_method'], **result['params'], **result['metrics']})
+                trajectory_parts.append(result['trajectory'])
+    else:
+        for method in methods:
+            label = method['label']
+            opt_method = method['opt_method']
+            params = method.get('params', {})
 
-        print(f"  [{label}] running...")
-        group = method.get('group', label)
-        mpc = run_mpc_experiment(opt_method=opt_method, simulator=simulator,
-                                 final_vol_constraint=opts.get('final_vol_constraint', True),
-                                 **common_kwargs, **params)
-        mpc_metrics = _compute_mpc_metrics(mpc)
-        rows.append({'label': label, 'group': group, 'opt_method': opt_method, **params, **mpc_metrics})
+            simulator = None
+            if sim_cfg:
+                sim_net = LPNetwork(config.data.network_path)
+                simulator = EPANETSimulator(
+                    network=sim_net,
+                    inp_file=sim_cfg['inp_file'],
+                    prices_col=config.columns.prices_col,
+                    demand_cols=config.columns.demand_cols,
+                )
 
-        traj = mpc.results.copy()
-        traj['model'] = opt_method
-        traj['label'] = label
-        traj['group'] = group
-        trajectory_parts.append(traj)
+            print(f"  [{label}] running...")
+            group = method.get('group', label)
+            mpc = run_mpc_experiment(opt_method=opt_method, simulator=simulator,
+                                     final_vol_constraint=opts.get('final_vol_constraint', True),
+                                     **common_kwargs, **params)
+            mpc_metrics = _compute_mpc_metrics(mpc)
+            rows.append({'label': label, 'group': group, 'opt_method': opt_method, **params, **mpc_metrics})
+
+            traj = mpc.results.copy()
+            traj['model'] = opt_method
+            traj['label'] = label
+            traj['group'] = group
+            trajectory_parts.append(traj)
+
+            if output_dir is not None:
+                pd.DataFrame(rows).to_csv(f"{output_dir}/summary.csv", index=False)
+                pd.concat(trajectory_parts, ignore_index=True).to_csv(f"{output_dir}/trajectories.csv", index=False)
+                print(f"  [{label}] saved to: {output_dir}/")
 
     results = pd.DataFrame(rows)
-    all_traj = pd.concat(trajectory_parts, ignore_index=True)
+    all_traj = pd.concat(trajectory_parts, ignore_index=True) if trajectory_parts else pd.DataFrame()
 
     if output_dir is not None:
-        results.to_csv(f"{output_dir}/summary.csv", index=False)
+        pd.DataFrame(rows).to_csv(f"{output_dir}/summary.csv", index=False)
         all_traj.to_csv(f"{output_dir}/trajectories.csv", index=False)
-        print(f"  Outputs saved to: {output_dir}/")
+        print(f"  All methods complete. Outputs in: {output_dir}/")
 
         net = LPNetwork(config.data.network_path)
         g = graphs.MPCGraphs(all_traj, net)

@@ -58,6 +58,7 @@ experiment:
     milp: true
     plot: false
     output_dir: "outputs/mpc_bsp"
+    n_workers: 5   # omit or set to 1 for sequential (default)
     plots:
       - tank_trajectories
       - hydraulic_accuracy
