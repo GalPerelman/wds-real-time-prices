@@ -644,24 +644,30 @@ class SP(BaseOptModel):
         return power_blocks_3d
 
     def sample_objective(self):
-        power_blocks_3d = self.get_power_block_3d()
-
-        # Build tariff for all samples. convert prices_samples from (t, n_samples) to (t, n_samples, n_fsp + n_vsp)
-        tariff_blocks = np.zeros((self.t, self.n, self.n_fsp + self.n_vsp))
-
         # For each time t and sample s, repeat the price over the n_fsp pumps
         # prices_samples[:, :, None] has shape (t, n_samples, 1)
         # last n_vsp entries stay zero
         prices_samples = self.sample[:self.t, :]  # (t, n)
-        tariff_blocks[:, :, :self.n_fsp] = prices_samples[:, :,
-                                           None]  # broadcast price over pumps, shape: (t, n_samples, n_fsp)
 
-        # Elementwise multiply to get c for each (t, pump, sample)
-        c_blocks = tariff_blocks * power_blocks_3d  # shape: (t, n_samples, n_fsp + n_vsp)
+        ##### OLD VERSION - Should be equivalent to the current code #####
+        # power_blocks_3d = self.get_power_block_3d()
+        #
+        # # Build tariff for all samples. convert prices_samples from (t, n_samples) to (t, n_samples, n_fsp + n_vsp)
+        # tariff_blocks = np.zeros((self.t, self.n, self.n_fsp + self.n_vsp))
 
-        # Flatten time + pumps into one variable index. shape: (n_vars, n_samples)
-        c_samples = c_blocks.reshape(self.t * (self.n_fsp + self.n_vsp), self.n)
+        # # broadcast price over pumps, shape: (t, n_samples, n_fsp)
+        # tariff_blocks[:, :, :self.n_fsp] = prices_samples[:, :, None]
+        #
+        # # Elementwise multiply to get c for each (t, pump, sample)
+        # c_blocks = tariff_blocks * power_blocks_3d  # shape: (t, n_samples, n_fsp + n_vsp)
+        #
+        # # Flatten time + pumps into one variable index. shape: (n_vars, n_samples)
+        # # the axis we want as the last dimension must already be the last dimension in the input before reshape
+        # c_samples = c_blocks.transpose(0, 2, 1).reshape(self.t * (self.n_fsp + self.n_vsp), self.n)
+        ##################################################################
 
+        power_full = np.concatenate([self.network.fsp['power'].values, np.zeros(self.n_vsp)])  # (n_pumps,)
+        c_samples = np.repeat(prices_samples, self.n_fsp + self.n_vsp, axis=0) * np.tile(power_full, self.t)[:, None]
         return c_samples
 
     def quantile_objective(self):
