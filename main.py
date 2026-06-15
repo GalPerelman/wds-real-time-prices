@@ -677,6 +677,7 @@ def _run_mpc_from_config(config, dm, uset_estimator):
         milp=opts['milp'],
         plot=opts['plot'],
         holiday_country=config.forecast.holiday_country,
+        simulator=simulator,
         final_vol_constraint=opts.get('final_vol_constraint', True),
         **exp.get('model_params', {})
     )
