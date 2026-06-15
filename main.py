@@ -70,8 +70,6 @@ def plot_forecast_comparison(forecast_df, actuals_df, demand_cols, prices_col):
     })
 
     return graphs.plot_predicted_vs_realized(panels)
-    fig.autofmt_xdate()
-    return fig, axes
 
 
 def run_single_model(model_class, model_params, sim_n, nominal_cost=None, sample=None):
