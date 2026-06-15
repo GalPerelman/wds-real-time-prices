@@ -603,6 +603,8 @@ class SP(BaseOptModel):
         self.sample = None
         self.delta = None
         self.sigma_rhs = None
+        self.eta_cvar = None  # CVaR auxiliary variable (VaR threshold)
+        self.s_cvar = None    # CVaR exceedance variables, shape (n,)
 
     def update_sampler(self):
         """
