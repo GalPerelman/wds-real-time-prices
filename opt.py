@@ -427,12 +427,16 @@ class RO(BaseOptModel):
         tau = cp.Variable(self.m, nonneg=True)  # one SOC slack per row
 
         power, tariff = self.objective()  # we need to multiply the pumps power by the uncertain part of the prices
-
         constraints = []
         for i in range(self.m):
-            mapping_i = constraints_mapping_matrices[i]  # n x p
+            mapping_i = constraints_mapping_matrices[i]  # n x p (num variables x uncertainty dimension)
             # applying the power on the uncertain tariffs
-            mapping_i[1: -1, :] *= power
+            # first row - epigraph fictive objective variable
+            # last row - represent the RHS column (fictive variable with constant 1)
+
+            # convert the power row into a column for correct broadcasting
+            # a[:, np.newaxis] is equivalent to a.reshape(-1, 1) converting a row to a column
+            mapping_i[1: -1, :] *= power[:, np.newaxis]
 
             # SOC of constraint i: ||mapping_mat^T @ x_aug||_2 <= t[i]
             constraints.append(cp.norm(constraints_mapping_matrices[i].T @ x_augmented, 2) <= tau[i])
@@ -511,7 +515,9 @@ class RO(BaseOptModel):
             mapping_i = mapping_mats[i]  # n x p
 
             # applying the power on the uncertain tariffs
-            mapping_i[1: -1, :] *= power
+            # convert the power row into a column for correct broadcasting
+            # a[:, np.newaxis] is equivalent to a.reshape(-1, 1) converting a row to a column
+            mapping_i[1: -1, :] *= power[:, np.newaxis]
 
             # Effect of each primitive uncertainty j on row i
             effect = mapping_i.T @ x_aug  # shape (p,)
