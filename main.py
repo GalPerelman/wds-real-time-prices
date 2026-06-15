@@ -269,32 +269,38 @@ def run_mpc_experiment(dm, uset_estimator, realizations, prices_col, demand_cols
     return mpc
 
 
-def _compute_mpc_metrics(mpc):
+def _compute_metrics_from_df(results, net, n_infeasible=None):
     """
-    Compute performance metrics from a completed MPC run.
+    Compute MPC performance metrics from a trajectory DataFrame.
 
-    Returns a dict with:
-        actual_cost          - total cost at realized prices (€)
-        predicted_cost       - total cost at forecast prices with same schedule (€)
-        n_violations         - number of (tank, timestep) pairs with bound violations
-        violated_vol         - total violated volume (m³), summed over all tanks and steps
-        constraint_satisfaction_rate - fraction of (tank, timestep) pairs without violation
-        price_mae            - MAE of price forecast over implemented steps (€/MWh)
-        demand_mae           - MAE of demand forecast over implemented steps, averaged over tanks (m³/h)
-        n_infeasible         - number of solver failures
+    n_infeasible: if None, approximated from opt_status == 'fallback' rows.
+    Steps that failed with no fallback are skipped in the MPC loop and never
+    recorded, so the approximation may undercount by that amount.
     """
-    results = mpc.results
-    net = mpc.net
+    if results.empty:
+        return {
+            'actual_cost': float('nan'), 'predicted_cost': float('nan'),
+            'n_min_violations': 0, 'min_violated_vol': 0.0,
+            'n_max_violations': 0, 'max_violated_vol': 0.0,
+            'violated_vol': 0.0, 'constraint_satisfaction_rate': float('nan'),
+            'price_mae': float('nan'), 'demand_mae': float('nan'),
+            'n_infeasible': n_infeasible if n_infeasible is not None else 0,
+        }
+
+    if n_infeasible is None:
+        n_infeasible = int((results['opt_status'] == 'fallback').sum())
+
     n_steps = len(results)
 
-    # Actual vs predicted cost (FSP only — VSPs have zero electricity cost per objective())
     fsp_powers = net.fsp['power'].values
     fsp_cols = [f'x_fsp_{i}' for i in range(net.n_fsp)]
     total_fsp_power = results[fsp_cols].values @ fsp_powers
-    actual_cost    = float((results['realized_tariff'].values  * total_fsp_power).sum()) / 1000
+    if 'epanet_cost' in results.columns:
+        actual_cost = float(results['epanet_cost'].sum())
+    else:
+        actual_cost = float((results['realized_tariff'].values * total_fsp_power).sum()) / 1000
     predicted_cost = float((results['predicted_tariff'].values * total_fsp_power).sum()) / 1000
 
-    # Constraint violations — summed from per-step columns computed in MPC._record_step
     prefix = 'epanet' if 'epanet_n_min_violations' in results.columns else 'opt'
     n_min_violations = int(results[f'{prefix}_n_min_violations'].sum())
     min_violated_vol = float(results[f'{prefix}_min_violated_vol'].sum())
@@ -303,10 +309,9 @@ def _compute_mpc_metrics(mpc):
     n_violations = n_min_violations + n_max_violations
     constraint_satisfaction_rate = 1.0 - n_violations / (n_steps * net.n_tanks)
 
-    # Forecast MAE over implemented steps
     price_mae = float(np.mean(np.abs(results['predicted_tariff'].values - results['realized_tariff'].values)))
     demand_maes = []
-    for tank_id, tank_data in net.tanks.iterrows():
+    for tank_id in net.tanks.index:
         demand_maes.append(np.mean(np.abs(
             results[f'predicted_demand_{tank_id}'].values - results[f'realized_demand_{tank_id}'].values
         )))
@@ -323,9 +328,27 @@ def _compute_mpc_metrics(mpc):
         'constraint_satisfaction_rate': constraint_satisfaction_rate,
         'price_mae':                    price_mae,
         'demand_mae':                   demand_mae,
-        'n_infeasible':                 mpc.n_infeasible,
+        'n_infeasible':                 n_infeasible,
     }
 
+
+def _compute_mpc_metrics(mpc):
+    results = mpc.results
+    net = mpc.net
+
+    if results.empty:
+        total_steps = mpc.experiment_horizon // mpc.wait
+        print(f"  Warning: MPC produced no recorded steps ({mpc.n_infeasible} infeasible out of {total_steps})")
+        return {
+            'actual_cost': float('nan'), 'predicted_cost': float('nan'),
+            'n_min_violations': 0, 'min_violated_vol': 0.0,
+            'n_max_violations': 0, 'max_violated_vol': 0.0,
+            'violated_vol': 0.0, 'constraint_satisfaction_rate': float('nan'),
+            'price_mae': float('nan'), 'demand_mae': float('nan'),
+            'n_infeasible': mpc.n_infeasible,
+        }
+
+    return _compute_metrics_from_df(results, net, n_infeasible=mpc.n_infeasible)
 
 def _run_mpc_sweep_from_config(config, dm, uset_estimator, config_path=None):
     exp = config.experiment
