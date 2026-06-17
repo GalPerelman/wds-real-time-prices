@@ -424,12 +424,17 @@ class RO(BaseOptModel):
         self.x = cp.Variable(self.n - 2, nonneg=True, boolean=self.get_bool_vector())  # decision vector
         x_augmented = cp.hstack([self.y, self.x, 1.0])  # [y; x; 1]  (last entry is constant)
 
-        tau = cp.Variable(self.m, nonneg=True)  # one SOC slack per row
-
         power, tariff = self.objective()  # we need to multiply the pumps power by the uncertain part of the prices
         constraints = []
         for i in range(self.m):
             mapping_i = constraints_mapping_matrices[i]  # n x p (num variables x uncertainty dimension)
+
+            # Constraints with no uncertain parameters reduce to their nominal form.
+            # Skipping the SOC avoids building ~840 redundant CVXPY expressions (one_comb_only + x_bounds rows).
+            if not np.any(mapping_i):
+                constraints.append(self.a[i, :] @ x_augmented <= 0.0)
+                continue
+
             # applying the power on the uncertain tariffs
             # first row - epigraph fictive objective variable
             # last row - represent the RHS column (fictive variable with constant 1)
@@ -438,10 +443,11 @@ class RO(BaseOptModel):
             # a[:, np.newaxis] is equivalent to a.reshape(-1, 1) converting a row to a column
             mapping_i[1: -1, :] *= power[:, np.newaxis]
 
+            tau_i = cp.Variable(nonneg=True)  # one SOC slack per uncertain row
             # SOC of constraint i: ||mapping_mat^T @ x_aug||_2 <= t[i]
-            constraints.append(cp.norm(constraints_mapping_matrices[i].T @ x_augmented, 2) <= tau[i])
+            constraints.append(cp.norm(mapping_i.T @ x_augmented, 2) <= tau_i)
             # Linear_i: A_full[i] @ x_aug + omega * t[i] <= 0
-            constraints.append(self.a[i, :] @ x_augmented + self.omega * tau[i] <= 0.0)
+            constraints.append(self.a[i, :] @ x_augmented + self.omega * tau_i <= 0.0)
 
         self.problem = cp.Problem(cp.Minimize(self.y), constraints)
 
@@ -495,9 +501,8 @@ class RO(BaseOptModel):
         self.x = cp.Variable(self.n - 2, nonneg=True, boolean=self.get_bool_vector())  # original decision vector
         x_aug = cp.hstack([self.y, self.x, 1.0])  # [y; x; 1]
 
-        # Bertsimas–Sim aux variables
-        pi = cp.Variable(self.m, nonneg=True)  # pi_i per row
-        theta = [cp.Variable(self.p, nonneg=True) for _ in range(self.m)]  # theta_i (vector) per row
+        # Bertsimas-Sim aux variables
+        pi = cp.Variable(self.m, nonneg=True)  # pi_i per row; entries for non-uncertain rows unused
 
         constraints = []
 
@@ -513,6 +518,12 @@ class RO(BaseOptModel):
         for i in range(self.m):
             a_i = self.a[i, :]  # 1 x n
             mapping_i = mapping_mats[i]  # n x p
+
+            # Constraints with no uncertain parameters reduce to their nominal form.
+            # Skipping theta allocation avoids building ~840 x p redundant CVXPY variables (one_comb_only + x_bounds rows).
+            if not np.any(mapping_i):
+                constraints.append(a_i @ x_aug <= 0)
+                continue
 
             # applying the power on the uncertain tariffs
             # convert the power row into a column for correct broadcasting
@@ -534,11 +545,12 @@ class RO(BaseOptModel):
                 # other constraints: no BS uncertainty
                 g = 0.0
 
+            theta_i = cp.Variable(self.p, nonneg=True)  # theta per uncertain row
             # Robust constraint: a_i^T x_aug + Gamma_i * pi_i + sum_j theta_ij <= 0
-            constraints.append(a_i @ x_aug + g * pi[i] + cp.sum(theta[i]) <= 0)
+            constraints.append(a_i @ x_aug + g * pi[i] + cp.sum(theta_i) <= 0)
 
             # Linking constraints: theta_ij >= s_i[j] - pi_i
-            constraints.append(theta[i] >= s_i - pi[i])
+            constraints.append(theta_i >= s_i - pi[i])
 
         self.problem = cp.Problem(cp.Minimize(self.y), constraints)
 
