@@ -530,9 +530,12 @@ class RO(BaseOptModel):
             # a[:, np.newaxis] is equivalent to a.reshape(-1, 1) converting a row to a column
             mapping_i[1: -1, :] *= power[:, np.newaxis]
 
-            # Effect of each primitive uncertainty j on row i
-            effect = mapping_i.T @ x_aug  # shape (p,)
-            s_i = cp.multiply(rho, effect)  # q_expr_j = rho_j * effect_j >= 0
+            # Restrict to active columns of mapping_i (columns with at least one non-zero entry).
+            # Inactive cols have no effect on x_aug - theta_ij=0, avoids redundant CVXPY variables.
+            active_cols = np.where(np.any(mapping_i != 0, axis=0))[0]  # indices of non-zero columns, len = k
+            rho_active = rho[active_cols]                               # shape (k,)
+            effect_active = mapping_i[:, active_cols].T @ x_aug        # shape (k,)
+            s_i = cp.multiply(rho_active, effect_active)               # shape (k,)
 
             # Choose Gamma for this row
             if i == 0:
@@ -545,7 +548,7 @@ class RO(BaseOptModel):
                 # other constraints: no BS uncertainty
                 g = 0.0
 
-            theta_i = cp.Variable(self.p, nonneg=True)  # theta per uncertain row
+            theta_i = cp.Variable(len(active_cols), nonneg=True)  # theta over active columns only
             # Robust constraint: a_i^T x_aug + Gamma_i * pi_i + sum_j theta_ij <= 0
             constraints.append(a_i @ x_aug + g * pi[i] + cp.sum(theta_i) <= 0)
 
