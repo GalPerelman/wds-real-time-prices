@@ -68,3 +68,7 @@ experiment:
     final_vol_constraint: false
     simulator:
       inp_file: "data/multi_tank/multi_tank.inp"
+
+    solver_params:  # gurobi solver parameters
+      Threads: 4
+      MIPGap: 0.01

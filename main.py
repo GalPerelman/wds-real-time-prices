@@ -118,7 +118,8 @@ def run_single_model(model_class, model_params, sim_n, nominal_cost=None, sample
 
 
 def por(uset_data, forecast, methods, net_path, t=24, n=500, milp=False, plot=True,
-        sampling_method='normal', seed=42, omega_to_alpha='gaussian', stat_analyze=True, final_vol_constraint=True):
+        sampling_method='normal', seed=42, omega_to_alpha='gaussian', stat_analyze=True,
+        final_vol_constraint=True, solver_params=None):
     """
     Price of Robustness (POR) comparison across multiple optimization methods.
     """
@@ -139,6 +140,7 @@ def por(uset_data, forecast, methods, net_path, t=24, n=500, milp=False, plot=Tr
         'uset_estimator': uset_estimator,
         'milp': milp,
         'final_vol_constraint': final_vol_constraint,
+        'solver_params': solver_params,
     }
 
     # Get nominal cost from LP for POR calculation
@@ -196,13 +198,14 @@ def por(uset_data, forecast, methods, net_path, t=24, n=500, milp=False, plot=Tr
 
 
 def run_static_optimization(model_class, forecast, uset_estimator, net_path='data/multi_tank',
-                            t=24, n_sim=500, milp=True, plot=True, final_vol_constraint=True, **model_params):
+                            t=24, n_sim=500, milp=True, plot=True, final_vol_constraint=True,
+                            solver_params=None, **model_params):
     """
     Run a single static optimization with optional plotting.
     """
     net = LPNetwork(net_path)
     params = {'network': net, 't': t, 'forecast': forecast, 'uset_estimator': uset_estimator, 'milp': milp,
-              'final_vol_constraint': final_vol_constraint, **model_params}
+              'final_vol_constraint': final_vol_constraint, 'solver_params': solver_params, **model_params}
 
     model = model_class(**params)
     model.formulate()
@@ -411,6 +414,7 @@ def _run_mpc_sweep_from_config(config, dm, uset_estimator, config_path=None):
         milp=opts['milp'],
         holiday_country=config.forecast.holiday_country,
         plot=False,
+        solver_params=opts.get('solver_params'),
     )
 
     output_dir = opts.get('output_dir', None)
@@ -613,6 +617,7 @@ def _run_static_from_config(config, forecaster, uset_estimator):
         milp=opts['milp'],
         plot=opts['plot'],
         final_vol_constraint=opts.get('final_vol_constraint', True),
+        solver_params=opts.get('solver_params'),
         **exp.model.get('params', {})
     )
 
@@ -640,6 +645,7 @@ def _run_por_from_config(config, dm, forecaster, uset_estimator):
         omega_to_alpha=opts.get('omega_to_alpha', 'gaussian'),
         stat_analyze=opts.get('stat_analyze', True),
         final_vol_constraint=opts.get('final_vol_constraint', True),
+        solver_params=opts.get('solver_params'),
     )
 
 
@@ -679,6 +685,7 @@ def _run_mpc_from_config(config, dm, uset_estimator):
         holiday_country=config.forecast.holiday_country,
         simulator=simulator,
         final_vol_constraint=opts.get('final_vol_constraint', True),
+        solver_params=opts.get('solver_params'),
         **exp.get('model_params', {})
     )
 

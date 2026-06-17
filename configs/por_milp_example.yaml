@@ -66,3 +66,6 @@ experiment:
     t: 24
     omega_to_alpha: subgaussian   # subgaussian or gaussian
     stat_analyze: true
+    solver_params:  # gurobi solver parameters
+      Threads: 4
+      MIPGap: 0.01

@@ -44,6 +44,7 @@ class MPC:
         self.sp_n_samples = kwargs.get("sp_n_samples", 1000)  # for SP: number of SAA samples
         self.sp_sampling_method = kwargs.get("sampling_method", "normal")  # for SP: scenario distribution
         self.lambda_cvar = kwargs.get("lambda_cvar", 0.0)  # for SP: CVaR risk weight (0 = pure SAA)
+        self.solver_params = kwargs.get("solver_params", None)
 
         self.t_idx = 0  # counter of time steps from start
         self.current_time = self.start_datetime  # timestamp of the first step
@@ -69,16 +70,18 @@ class MPC:
         if self.opt_method in ["lp", "pto"]:
             model = BaseOptModel(network=self.net, t=self.step_horizon, forecast=self.last_forecast,
                                  uset_estimator=self.uset_estimator, milp=self.milp,
-                                 final_vol_constraint=self.final_vol_constraint)
+                                 final_vol_constraint=self.final_vol_constraint,
+                                 solver_params=self.solver_params)
         elif self.opt_method in ["ro", "RO"]:
             model = RO(network=self.net, t=self.step_horizon, omega=self.omega, gamma=self.gamma, k=self.k,
                        forecast=self.last_forecast, uset_estimator=self.uset_estimator, milp=self.milp,
-                       uncertainty_set=self.u_set, final_vol_constraint=self.final_vol_constraint)
+                       uncertainty_set=self.u_set, final_vol_constraint=self.final_vol_constraint,
+                       solver_params=self.solver_params)
         elif self.opt_method in ["sp", "SP", "CC", "SAA"]:
             model = SP(network=self.net, t=self.step_horizon, alpha=self.alpha, lambda_cvar=self.lambda_cvar,
                        forecast=self.last_forecast, uset_estimator=self.uset_estimator, milp=self.milp,
                        final_vol_constraint=self.final_vol_constraint, n=self.sp_n_samples,
-                       sampling_method=self.sp_sampling_method)
+                       sampling_method=self.sp_sampling_method, solver_params=self.solver_params)
         else:
             raise ValueError(f"Unknown optimization method: {self.opt_method}")
 
