@@ -41,8 +41,8 @@ class MPC:
         self.gamma = kwargs.get("gamma", None)  # for RO with Budget of Uncertainty
         self.k = kwargs.get("k", 1.5)  # for RO with Budget of Uncertainty
         self.alpha = kwargs.get("alpha", None)  # required for SP: (alpha_start, alpha_end); None errors loudly if unset
-        self.sp_n_samples = kwargs.get("sp_n_samples", None)  # for SP: number of SAA samples
-        self.sp_sampling_method = kwargs.get("sampling_method", None)  # for SP: scenario distribution
+        self.sp_n_samples = kwargs.get("sp_n_samples", 1000)  # for SP: number of SAA samples
+        self.sp_sampling_method = kwargs.get("sampling_method", "normal")  # for SP: scenario distribution
         self.lambda_cvar = kwargs.get("lambda_cvar", 0.0)  # for SP: CVaR risk weight (0 = pure SAA)
 
         self.t_idx = 0  # counter of time steps from start

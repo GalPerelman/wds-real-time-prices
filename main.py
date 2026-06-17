@@ -227,10 +227,10 @@ def run_static_optimization(model_class, forecast, uset_estimator, net_path='dat
     return result
 
 
-def run_mpc_experiment(dm, uset_estimator, realizations, prices_col, demand_cols, opt_method='ro',
-                       start_datetime=None, step_horizon=24, wait=1, experiment_horizon=48,
-                       forecast_method='xgb', forecast_params=None, net_path='data/multi_tank',
-                       milp=True, plot=True, holiday_country='HU', simulator=None, final_vol_constraint=True, **opt_params):
+def run_mpc_experiment(dm, uset_estimator, realizations, prices_col, demand_cols, opt_method,
+                       start_datetime, step_horizon, wait, experiment_horizon,
+                       forecast_method, net_path, milp, plot, holiday_country, final_vol_constraint,
+                       forecast_params=None, simulator=None, **opt_params):
     """
     Run an MPC rolling horizon experiment.
 
@@ -249,7 +249,7 @@ def run_mpc_experiment(dm, uset_estimator, realizations, prices_col, demand_cols
         net_path: Path to network data
         milp: Use MILP formulation
         plot: Generate plots
-        holiday_country: ISO country code for holidays (default 'HU')
+        holiday_country: ISO country code for holidays
         **opt_params: Additional optimization parameters (omega, gamma, alpha, etc.)
     """
     mpc = MPC(net_path=net_path, opt_method=opt_method, db=dm, uset_estimator=uset_estimator,
