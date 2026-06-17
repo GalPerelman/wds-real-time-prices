@@ -1,5 +1,6 @@
 import argparse
 import shutil
+import time
 from pathlib import Path
 import cvxpy as cp
 import matplotlib.pyplot as plt
@@ -92,8 +93,10 @@ def run_single_model(model_class, model_params, sim_n, nominal_cost=None, sample
         model_params = {**model_params, 'sample': sample}
 
     model = model_class(**model_params)
+    t0 = time.time()
     model.formulate()
     status, cost = model.solve()
+    total_time = time.time() - t0
 
     if status not in cp.settings.SOLUTION_PRESENT:
         return None
@@ -109,6 +112,8 @@ def run_single_model(model_class, model_params, sim_n, nominal_cost=None, sample
         'reliability': 1 - violation_rate,
         'violated_vol': sim.violation_volume.sum().sum(),
         'inaccurate': status != 'optimal',
+        'solver_time': model.solve_time,
+        'total_time': total_time,
     }
 
     if nominal_cost is not None:
