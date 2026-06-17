@@ -114,6 +114,7 @@ def run_single_model(model_class, model_params, sim_n, nominal_cost=None, sample
         'inaccurate': status != 'optimal',
         'solver_time': model.solve_time,
         'total_time': total_time,
+        'mip_gap': model.solver_mip_gap,
     }
 
     if nominal_cost is not None:
@@ -324,6 +325,10 @@ def _compute_metrics_from_df(results, net, n_infeasible=None):
         )))
     demand_mae = float(np.mean(demand_maes))
 
+    mip_gap_col = results['solver_mip_gap'] if 'solver_mip_gap' in results.columns else pd.Series(dtype=float)
+    mean_mip_gap = float(np.nanmean(mip_gap_col)) if not mip_gap_col.empty else float('nan')
+    max_mip_gap = float(np.nanmax(mip_gap_col)) if not mip_gap_col.empty else float('nan')
+
     return {
         'actual_cost':                  actual_cost,
         'predicted_cost':               predicted_cost,
@@ -336,6 +341,8 @@ def _compute_metrics_from_df(results, net, n_infeasible=None):
         'price_mae':                    price_mae,
         'demand_mae':                   demand_mae,
         'n_infeasible':                 n_infeasible,
+        'mean_mip_gap':                 mean_mip_gap,
+        'max_mip_gap':                  max_mip_gap,
     }
 
 
