@@ -17,7 +17,7 @@ pd.set_option('display.width', 1000)
 
 class BaseOptModel:
     def __init__(self, network, t, forecast, uset_estimator=None, solver_params=None, solver_display=False, milp=True,
-                 final_vol_constraint=True, **kwargs):
+                 final_vol_constraint=True, n_binary_steps=None, **kwargs):
         self.network = network
         self.t = t
         self.forecast = forecast  # should be a pandas dataframe, first column prices, rest demands
@@ -26,6 +26,7 @@ class BaseOptModel:
         self.solver_display = solver_display
         self.milp = milp
         self.final_vol_constraint = final_vol_constraint
+        self.n_binary_steps = n_binary_steps if n_binary_steps is not None else self.t
 
         # for matrices dimensions
         self.n_fsp, self.n_vsp, self.n_tanks = self.network.n_fsp, self.network.n_vsp, self.network.n_tanks
@@ -73,7 +74,7 @@ class BaseOptModel:
             bool_vector = ()
 
             # For each time step, mark the first n_fsp elements as boolean
-            for i in range(self.t):
+            for i in range(self.n_binary_steps):
                 start_idx = i * (self.n_fsp + self.n_vsp)
                 end_idx = start_idx + self.n_fsp
                 for _ in range(start_idx, end_idx):
@@ -246,18 +247,19 @@ class BaseOptModel:
         # Default solver parameters for reproducibility
         solver_opts = {
             'Seed': seed,           # Fix random seed for reproducibility
-            'Threads': 1,           # Single thread for deterministic behavior
         }
         # Merge with user-provided solver params if any
         if self.solver_params:
             solver_opts.update(self.solver_params)
 
-        self.problem.solve(solver=cp.GUROBI, reoptimize=True, verbose=self.solver_display, **solver_opts)
+        # solver_display may be overridden via solver_params; pop it before passing Gurobi-specific opts
+        verbose = solver_opts.pop('solver_display', self.solver_display)
+        self.problem.solve(solver=cp.GUROBI, reoptimize=True, verbose=verbose, **solver_opts)
         self.solve_time = self.problem.solver_stats.solve_time
         self.solver_mip_gap = (
             self.problem.solver_stats.extra_stats.MIPGap if self.milp else float('nan')
         )
-        if self.solver_display:
+        if verbose:
             print(f"Status: {self.problem.status} | Optimal value: {self.problem.value} | Model: {type(self).__name__}")
         if self.problem.status in cp.settings.SOLUTION_PRESENT:
             self.extract_solution()

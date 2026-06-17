@@ -125,7 +125,7 @@ def run_single_model(model_class, model_params, sim_n, nominal_cost=None, sample
 
 def por(uset_data, forecast, methods, net_path, t=24, n=500, milp=False, plot=True,
         sampling_method='normal', seed=42, omega_to_alpha='gaussian', stat_analyze=True,
-        final_vol_constraint=True, solver_params=None):
+        final_vol_constraint=True, solver_params=None, n_binary_steps=None):
     """
     Price of Robustness (POR) comparison across multiple optimization methods.
     """
@@ -147,6 +147,7 @@ def por(uset_data, forecast, methods, net_path, t=24, n=500, milp=False, plot=Tr
         'milp': milp,
         'final_vol_constraint': final_vol_constraint,
         'solver_params': solver_params,
+        'n_binary_steps': n_binary_steps,
     }
 
     # Get nominal cost from LP for POR calculation
@@ -205,13 +206,14 @@ def por(uset_data, forecast, methods, net_path, t=24, n=500, milp=False, plot=Tr
 
 def run_static_optimization(model_class, forecast, uset_estimator, net_path='data/multi_tank',
                             t=24, n_sim=500, milp=True, plot=True, final_vol_constraint=True,
-                            solver_params=None, **model_params):
+                            solver_params=None, n_binary_steps=None, **model_params):
     """
     Run a single static optimization with optional plotting.
     """
     net = LPNetwork(net_path)
     params = {'network': net, 't': t, 'forecast': forecast, 'uset_estimator': uset_estimator, 'milp': milp,
-              'final_vol_constraint': final_vol_constraint, 'solver_params': solver_params, **model_params}
+              'final_vol_constraint': final_vol_constraint, 'solver_params': solver_params,
+              'n_binary_steps': n_binary_steps, **model_params}
 
     model = model_class(**params)
     model.formulate()
@@ -239,7 +241,7 @@ def run_static_optimization(model_class, forecast, uset_estimator, net_path='dat
 def run_mpc_experiment(dm, uset_estimator, realizations, prices_col, demand_cols, opt_method,
                        start_datetime, step_horizon, wait, experiment_horizon,
                        forecast_method, net_path, milp, plot, holiday_country, final_vol_constraint,
-                       forecast_params=None, simulator=None, **opt_params):
+                       n_binary_steps=None, forecast_params=None, simulator=None, **opt_params):
     """
     Run an MPC rolling horizon experiment.
 
@@ -267,7 +269,8 @@ def run_mpc_experiment(dm, uset_estimator, realizations, prices_col, demand_cols
               prices_col=prices_col, demand_cols=demand_cols,
               forecast_method=forecast_method, forecast_params=forecast_params,
               milp=milp, holiday_country=holiday_country, simulator=simulator,
-              final_vol_constraint=final_vol_constraint, **opt_params)
+              final_vol_constraint=final_vol_constraint, n_binary_steps=n_binary_steps,
+              **opt_params)
     mpc.init_opt_model()
     mpc.run()
 
@@ -427,6 +430,7 @@ def _run_mpc_sweep_from_config(config, dm, uset_estimator, config_path=None):
         holiday_country=config.forecast.holiday_country,
         plot=False,
         solver_params=opts.get('solver_params'),
+        n_binary_steps=opts.get('n_binary_steps'),
     )
 
     output_dir = opts.get('output_dir', None)
@@ -630,6 +634,7 @@ def _run_static_from_config(config, forecaster, uset_estimator):
         plot=opts['plot'],
         final_vol_constraint=opts.get('final_vol_constraint', True),
         solver_params=opts.get('solver_params'),
+        n_binary_steps=opts.get('n_binary_steps'),
         **exp.model.get('params', {})
     )
 
@@ -658,6 +663,7 @@ def _run_por_from_config(config, dm, forecaster, uset_estimator):
         stat_analyze=opts.get('stat_analyze', True),
         final_vol_constraint=opts.get('final_vol_constraint', True),
         solver_params=opts.get('solver_params'),
+        n_binary_steps=opts.get('n_binary_steps'),
     )
 
 
@@ -698,6 +704,7 @@ def _run_mpc_from_config(config, dm, uset_estimator):
         simulator=simulator,
         final_vol_constraint=opts.get('final_vol_constraint', True),
         solver_params=opts.get('solver_params'),
+        n_binary_steps=opts.get('n_binary_steps'),
         **exp.get('model_params', {})
     )
 

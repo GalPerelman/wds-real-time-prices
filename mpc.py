@@ -15,7 +15,7 @@ import forecast
 class MPC:
     def __init__(self, net_path, opt_method, db, uset_estimator, start_datetime, step_horizon, wait, experiment_horizon,
                  realizations, prices_col, demand_cols, forecast_method, milp, holiday_country, final_vol_constraint,
-                 forecast_params=None, simulator=None, **kwargs):
+                 n_binary_steps=None, forecast_params=None, simulator=None, **kwargs):
         self.net_path = net_path
         self.opt_method = opt_method
         self.db = db
@@ -28,6 +28,7 @@ class MPC:
         self.forecast_method = forecast_method
         self.forecast_params = forecast_params or {}
         self.milp = milp
+        self.n_binary_steps = n_binary_steps
 
         # Forecast configuration
         self.prices_col = prices_col
@@ -71,16 +72,19 @@ class MPC:
             model = BaseOptModel(network=self.net, t=self.step_horizon, forecast=self.last_forecast,
                                  uset_estimator=self.uset_estimator, milp=self.milp,
                                  final_vol_constraint=self.final_vol_constraint,
+                                 n_binary_steps=self.n_binary_steps,
                                  solver_params=self.solver_params)
         elif self.opt_method in ["ro", "RO"]:
             model = RO(network=self.net, t=self.step_horizon, omega=self.omega, gamma=self.gamma, k=self.k,
                        forecast=self.last_forecast, uset_estimator=self.uset_estimator, milp=self.milp,
                        uncertainty_set=self.u_set, final_vol_constraint=self.final_vol_constraint,
+                       n_binary_steps=self.n_binary_steps,
                        solver_params=self.solver_params)
         elif self.opt_method in ["sp", "SP", "CC", "SAA"]:
             model = SP(network=self.net, t=self.step_horizon, alpha=self.alpha, lambda_cvar=self.lambda_cvar,
                        forecast=self.last_forecast, uset_estimator=self.uset_estimator, milp=self.milp,
                        final_vol_constraint=self.final_vol_constraint, n=self.sp_n_samples,
+                       n_binary_steps=self.n_binary_steps,
                        sampling_method=self.sp_sampling_method, solver_params=self.solver_params)
         else:
             raise ValueError(f"Unknown optimization method: {self.opt_method}")
