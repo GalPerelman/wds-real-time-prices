@@ -732,11 +732,16 @@ class SP(BaseOptModel):
 
             # Optional CVaR term: lambda_cvar * CVaR_{alpha_start}(cost)
             # LP reformulation via Rockafellar-Uryasev: CVaR = eta + 1/((1-alpha)*N) * sum(s)
-            self.eta_cvar = cp.Variable()
-            self.s_cvar = cp.Variable(self.n, nonneg=True)
-            cvar = self.eta_cvar + (1 / ((1 - self.alpha_start) * self.n)) * cp.sum(self.s_cvar)
-            obj = obj + self.lambda_cvar * cvar
-            cvar_constraints = [self.s_cvar >= cost_scenarios - self.eta_cvar]
+            # Skipped when lambda_cvar is 0 or None: no auxiliary variables or constraints added.
+            if self.lambda_cvar:
+                self.eta_cvar = cp.Variable()
+                self.s_cvar = cp.Variable(self.n, nonneg=True)
+                cvar = self.eta_cvar + (1 / ((1 - self.alpha_start) * self.n)) * cp.sum(self.s_cvar)
+                obj = obj + self.lambda_cvar * cvar
+                cvar_constraints = [self.s_cvar >= cost_scenarios - self.eta_cvar]
+            else:
+                self.eta_cvar = None
+                self.s_cvar = None
         else:
             c_quantile = self.quantile_objective()
             obj = cp.sum(c_quantile.T @ self.x)
