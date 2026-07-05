@@ -14,7 +14,7 @@ import uncertainty_utils
 import config as cfg
 import por_statistical_analysis as psa
 from network import LPNetwork
-from opt import BaseOptModel, RO, SP, Simulation
+from opt import BaseOptModel, RO, SP, Simulation, extract_problem_stats
 from mpc import MPC
 from epanet_simulator import EPANETSimulator
 
@@ -333,6 +333,14 @@ def _compute_metrics_from_df(results, net, n_infeasible=None):
     mean_mip_gap = float(np.nanmean(mip_gap_col)) if not mip_gap_col.empty else float('nan')
     max_mip_gap = float(np.nanmax(mip_gap_col)) if not mip_gap_col.empty else float('nan')
 
+    solver_time_col = results['solver_time'] if 'solver_time' in results.columns else pd.Series(dtype=float)
+    mean_solver_time = float(np.nanmean(solver_time_col)) if not solver_time_col.empty else float('nan')
+    std_solver_time = float(np.nanstd(solver_time_col)) if not solver_time_col.empty else float('nan')
+
+    step_time_col = results['step_total_time'] if 'step_total_time' in results.columns else pd.Series(dtype=float)
+    mean_step_total_time = float(np.nanmean(step_time_col)) if not step_time_col.empty else float('nan')
+    std_step_total_time = float(np.nanstd(step_time_col)) if not step_time_col.empty else float('nan')
+
     return {
         'actual_cost':                  actual_cost,
         'predicted_cost':               predicted_cost,
@@ -347,6 +355,10 @@ def _compute_metrics_from_df(results, net, n_infeasible=None):
         'n_infeasible':                 n_infeasible,
         'mean_mip_gap':                 mean_mip_gap,
         'max_mip_gap':                  max_mip_gap,
+        'mean_solver_time':             mean_solver_time,
+        'std_solver_time':              std_solver_time,
+        'mean_step_total_time':         mean_step_total_time,
+        'std_step_total_time':          std_step_total_time,
     }
 
 
@@ -399,6 +411,7 @@ def _run_method_worker(worker_args):
                              final_vol_constraint=final_vol_constraint,
                              **common_kwargs, **params)
     mpc_metrics = _compute_mpc_metrics(mpc)
+    problem_stats = extract_problem_stats(mpc.opt_model)
 
     traj = mpc.results.copy()
     traj['model'] = opt_method
@@ -406,7 +419,8 @@ def _run_method_worker(worker_args):
     traj['group'] = group
 
     return {'label': label, 'group': group, 'opt_method': opt_method,
-            'params': params, 'metrics': mpc_metrics, 'trajectory': traj}
+            'params': params, 'metrics': mpc_metrics, 'trajectory': traj,
+            'problem_stats': problem_stats}
 
 
 def _label_to_filename(label):
@@ -484,6 +498,7 @@ def _run_mpc_sweep_from_config(config, dm, uset_estimator, config_path=None):
     methods = cfg.expand_methods(exp.methods)
     rows = []
     trajectory_parts = []
+    problem_stats_rows = []
 
     if n_workers > 1:
         futures_to_method = {}
@@ -506,6 +521,8 @@ def _run_mpc_sweep_from_config(config, dm, uset_estimator, config_path=None):
                 row = {'label': label, 'group': result['group'], 'opt_method': result['opt_method'],
                        **result['params'], **result['metrics']}
                 rows.append(row)
+                problem_stats_rows.append({'label': label, 'group': result['group'],
+                                           'opt_method': result['opt_method'], **result['problem_stats']})
                 traj = result['trajectory']
                 trajectory_parts.append(traj)
                 if output_dir is not None:
@@ -538,6 +555,8 @@ def _run_mpc_sweep_from_config(config, dm, uset_estimator, config_path=None):
             mpc_metrics = _compute_mpc_metrics(mpc)
             row = {'label': label, 'group': group, 'opt_method': opt_method, **params, **mpc_metrics}
             rows.append(row)
+            problem_stats_rows.append({'label': label, 'group': group, 'opt_method': opt_method,
+                                       **extract_problem_stats(mpc.opt_model)})
 
             traj = mpc.results.copy()
             traj['model'] = opt_method
@@ -557,6 +576,7 @@ def _run_mpc_sweep_from_config(config, dm, uset_estimator, config_path=None):
     if output_dir is not None:
         pd.DataFrame(rows).to_csv(f"{output_dir}/summary.csv", index=False)
         all_traj.to_csv(f"{output_dir}/trajectories.csv", index=False)
+        pd.DataFrame(problem_stats_rows).to_csv(f"{output_dir}/problem_stats.csv", index=False)
         for f in list(Path(output_dir).glob('sum_*.csv')) + list(Path(output_dir).glob('traj_*.csv')):
             f.unlink()
         print(f"  All methods complete. Outputs in: {output_dir}/")

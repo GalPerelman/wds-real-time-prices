@@ -60,6 +60,11 @@ class BaseOptModel:
         self.x_vsp_value = None
         self.x_value = None
 
+        # solver result placeholders (set by solve())
+        self.solve_time = None
+        self.solver_mip_gap = None
+        self.bb_node_count = None
+
         # Set the nominal electricity prices and demands for the current solution
         self.apply_forecast()
 
@@ -260,6 +265,9 @@ class BaseOptModel:
         self.solver_mip_gap = (
             self.problem.solver_stats.extra_stats.MIPGap if self.milp else float('nan')
         )
+        self.bb_node_count = (
+            int(self.problem.solver_stats.extra_stats.NodeCount) if self.milp else float('nan')
+        )
         if verbose:
             print(f"Status: {self.problem.status} | Optimal value: {self.problem.value} | Model: {type(self).__name__}")
         if self.problem.status in cp.settings.SOLUTION_PRESENT:
@@ -309,6 +317,22 @@ class BaseOptModel:
             plt.figure()
             plt.imshow(sigma[self.t:, self.t:], cmap='viridis')
             plt.show()
+
+
+def extract_problem_stats(model):
+    """Read structural metrics from a solved Gurobi model.
+
+    Returns counts from the original (pre-presolve) model. Call once per method after the
+    first successful solve; values are constant for a given method/horizon configuration.
+    """
+    g = model.problem.solver_stats.extra_stats
+    return {
+        'n_vars_continuous': g.NumVars - g.NumBinVars,
+        'n_vars_binary': g.NumBinVars,
+        'n_constrs_linear': g.NumConstrs,
+        'n_constrs_soc': g.NumQConstrs,
+        'n_nonzeros': g.NumNZs,
+    }
 
 
 class RO(BaseOptModel):
