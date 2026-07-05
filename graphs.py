@@ -7,6 +7,7 @@ import matplotlib.colors as mcolors
 import pandas as pd
 from matplotlib import ticker as mtick
 from matplotlib.gridspec import GridSpec
+from epyt import epanet as _epanet
 
 # Global palette for optimization methods.
 # 'color'  - representative fixed color for single-point/static plots
@@ -296,9 +297,29 @@ def plot_mpc_forecast_accuracy(trajectories, method=None, figsize=None):
 
 
 class MPCGraphs:
-    def __init__(self, trajectories, net):
+    def __init__(self, trajectories, net, inp_file=None):
         self.trajectories = trajectories
         self.net = net
+        self._epanet_bounds = None
+        self._tank_areas = None
+        if inp_file:
+            self._epanet_bounds, self._tank_areas = self._load_epanet_bounds(inp_file)
+
+    def _load_epanet_bounds(self, inp_file):
+        """Return ({tank_id: physical_max_vol_m3}, {tank_id: area_m2}) from EPANET INP."""
+        d = _epanet(inp_file)
+        bounds = {}
+        areas = {}
+        for tank_id, tank_row in self.net.tanks.iterrows():
+            idx = d.getNodeIndex(str(tank_row['epanet_id']))
+            diam = d.getNodeTankDiameter(idx)
+            area = np.pi * (diam / 2) ** 2
+            areas[tank_id] = area
+            min_level = d.getNodeTankMinimumWaterLevel(idx)
+            max_level = d.getNodeTankMaximumWaterLevel(idx)
+            bounds[tank_id] = area * (max_level - min_level)
+        d.unload()
+        return bounds, areas
 
     def plot_hydraulic_accuracy(self, methods=None):
         all_labels = self.trajectories['label'].unique().tolist()
@@ -442,25 +463,21 @@ class MPCGraphs:
         fig.subplots_adjust(left=0.1, right=0.95, top=0.92, bottom=0.15)
         return fig, ax
 
-    def plot_tank_trajectories(self, methods=None, show_opt=False):
+    def plot_tank_trajectories(self, methods=None, show_opt=False, levels=False, tank_ids=None, output_path=""):
         """
-        Plot tank volume trajectories over the full MPC experiment.
-
-        One row per tank plus a shared tariff panel at the bottom.
-        All methods are overlaid on each tank subplot, colored by group
-        (each group gets its color from GROUP_STYLES; all sweep variants
-        within a group share the same color).
-
+        Plot tank volume (or water level) trajectories over the full MPC experiment.
         Args:
             methods:  list of labels to include; None = all labels
             show_opt: if True and EPANET columns are present, overlay the
                       optimizer (LP mass-balance) volumes as dashed lines.
+            levels:   if True, convert volumes to water levels (m) using tank diameters from net.tanks['diameter'].
         """
         all_labels = self.trajectories['label'].unique().tolist()
         if methods is None:
             methods = all_labels
 
-        tank_ids = list(self.net.tanks.index)
+        if tank_ids is None:
+            tank_ids = list(self.net.tanks.index)
         n_tanks = len(tank_ids)
 
         label_to_group = {}
@@ -473,9 +490,9 @@ class MPCGraphs:
         has_epanet = f'epanet_vol_tank_{tank_ids[0]}' in self.trajectories.columns
 
         n_rows = n_tanks + 1
-        height_ratios = [2] * n_tanks + [1]
-        fig = plt.figure(figsize=(6, 1 * n_tanks + 1))
-        gs = GridSpec(n_rows, 1, height_ratios=height_ratios, hspace=0.15, figure=fig)
+        height_ratios = [2] * n_tanks + [1.3]
+        fig = plt.figure(figsize=(8, 1.7 * (n_tanks + 1)))
+        gs = GridSpec(n_rows, 1, height_ratios=height_ratios, hspace=0.12, figure=fig)
         tank_axes = [fig.add_subplot(gs[0])]
         for i in range(1, n_tanks):
             tank_axes.append(fig.add_subplot(gs[i], sharex=tank_axes[0]))
@@ -487,6 +504,21 @@ class MPCGraphs:
             vol_col_key = f'epanet_vol_tank_{tank_id}' if has_epanet else f'opt_vol_tank_{tank_id}'
             opt_col_key = f'opt_vol_tank_{tank_id}'
 
+            if levels:
+                if 'diameter' in self.net.tanks.columns:
+                    diam = tank_data['diameter']
+                    area = np.pi * (diam / 2) ** 2
+                elif self._tank_areas is not None:
+                    area = self._tank_areas[tank_id]
+                else:
+                    raise ValueError(
+                        "levels=True requires either a 'diameter' column in tanks.csv "
+                        "or inp_file passed to MPCGraphs.__init__"
+                    )
+                _conv = lambda v, a=area: v / a
+            else:
+                _conv = lambda v: v
+
             for label in methods:
                 df = self.trajectories[self.trajectories['label'] == label]
                 if df.empty:
@@ -496,26 +528,37 @@ class MPCGraphs:
                 vol = df[vol_col_key].values
 
                 zorder = 5 if label in ['lp', 'LP'] else 3
-                ax.plot(time, vol, color=color, linewidth=1.2, label=label, zorder=zorder)
+                ax.plot(time, _conv(vol), color=color, linewidth=1.2,
+                        label=to_latex_label(label), zorder=zorder)
 
                 if show_opt and has_epanet:
-                    ax.plot(time, df[opt_col_key].values, color=color, linewidth=0.8,
+                    ax.plot(time, _conv(df[opt_col_key].values), color=color, linewidth=0.8,
                             linestyle='--', alpha=0.55, zorder=2)
 
-                # Violation markers: 'x' where volume crosses real bounds
+                # Violation markers: detect in volume space, plot in display space
                 viol_mask = (vol < tank_data['min_vol']) | (vol > tank_data['max_vol'])
                 if viol_mask.any():
                     ax.scatter(time[viol_mask], vol[viol_mask], color=color,
                                marker='o', s=50, linewidths=1.5, zorder=5, facecolor="none")
 
-            ax.axhline(tank_data['min_vol'], color='k', linestyle='--', linewidth=0.9, zorder=1)
-            ax.axhline(tank_data['max_vol'], color='k', linestyle='--', linewidth=0.9, zorder=1)
-            ax.set_ylabel(f'Tank {tank_id} ($m^3$)')
+            ax.axhline(_conv(tank_data['min_vol']), color='k', linestyle='--', linewidth=0.9, zorder=1)
+            ax.axhline(_conv(tank_data['max_vol']), color='k', linestyle='--', linewidth=0.9, zorder=1)
+            if self._epanet_bounds and tank_id in self._epanet_bounds:
+                ax.axhline(_conv(self._epanet_bounds[tank_id]), color='grey', linestyle=':',
+                           linewidth=0.8, zorder=1)
+            ylabel_unit = 'm' if levels else '$m^3$'
+            if levels:
+                metric = 'Level'
+            else:
+                metric = 'Volume'
+            ax.set_ylabel(f'Tank {tank_id} {metric}\n({ylabel_unit})')
             ax.grid(zorder=0)
             ax.set_axisbelow(True)
+
+            ax.set_ylim(bottom=0, top=_conv(tank_data['max_vol'] * 1.2))
             plt.setp(ax.get_xticklabels(), visible=False)
 
-        # Tariff panel — realized and predicted are identical across methods; use first
+        # Tariff panel - realized and predicted are identical across methods, use first
         ref_df = self.trajectories[self.trajectories['label'] == methods[0]]
         ref_time = pd.to_datetime(ref_df['time'])
         tariff_ax.plot(ref_time, ref_df['realized_tariff'].values,
@@ -525,13 +568,13 @@ class MPCGraphs:
         tariff_ax.set_ylabel('Tariff\n(€/MWh)')
         tariff_ax.grid(zorder=0)
         tariff_ax.set_axisbelow(True)
-        tariff_ax.xaxis.set_major_formatter(mdates.DateFormatter('%m-%d\n%H:%M'))
-        tariff_ax.xaxis.set_major_locator(mdates.AutoDateLocator())
-        tariff_ax.legend(loc='upper right', fontsize=8, framealpha=0.9)
-        fig.autofmt_xdate(rotation=0, ha='center')
+        _loc = mdates.AutoDateLocator()
+        tariff_ax.xaxis.set_major_locator(_loc)
+        tariff_ax.xaxis.set_major_formatter(mdates.DateFormatter('%d'))
+        tariff_ax.set_xlabel(ref_time.iloc[0].strftime('%B %Y'))
+        tariff_ax.legend(loc='upper left', fontsize=LEG_FONT_SIZE, framealpha=0.9, ncol=2)
 
         # Main legend: methods + opt dashed line + bounds — no tariff (handled locally above)
-        from matplotlib.lines import Line2D
         handles, labels_leg = tank_axes[0].get_legend_handles_labels()
         if show_opt and has_epanet:
             handles += [Line2D([0], [0], color='grey', linewidth=1.8, linestyle='--')]
@@ -546,13 +589,17 @@ class MPCGraphs:
         handles = [handles[i] for i in order]
         labels_leg = [labels_leg[i] for i in order]
 
-        leg = fig.legend(handles, labels_leg, loc='upper left', bbox_to_anchor=(0.095, 0.96),
-                         bbox_transform=fig.transFigure, ncol=ncol, fontsize=9,
+        leg = fig.legend(handles, labels_leg, loc='upper left', bbox_to_anchor=(0.11, 0.93),
+                         bbox_transform=fig.transFigure, ncol=ncol, fontsize=LEG_FONT_SIZE,
                          framealpha=0.9)
         for line in leg.get_lines():
             line.set_linewidth(2.2)
 
-        fig.subplots_adjust(left=0.1, right=0.97, top=0.87, bottom=0.08)
+        fig.subplots_adjust(left=0.12, right=0.97, top=0.87, bottom=0.14, hspace=0.15)
+        fig.align_ylabels()
+        if output_path:
+            os.makedirs(output_path, exist_ok=True)
+            fig.savefig(os.path.join(output_path, 'tank_trajectories.png'), dpi=300)
         return fig, tank_axes, tariff_ax
 
     def plot_cumulative_metrics(self, methods=None):
