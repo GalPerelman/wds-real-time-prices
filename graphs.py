@@ -1,12 +1,15 @@
 import math
+import os
 import numpy as np
 import matplotlib as mpl
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 import matplotlib.colors as mcolors
+import matplotlib.patheffects as PathEffects
 import pandas as pd
 from matplotlib import ticker as mtick
 from matplotlib.gridspec import GridSpec
+from matplotlib.lines import Line2D
 from epyt import epanet as _epanet
 
 # Global palette for optimization methods.
@@ -28,6 +31,7 @@ GROUP_STYLES = {
     'CC-SP-relaxed': {'color': 'C1',  'cmap': 'Oranges',  'marker': '^'},
 }
 
+LEG_FONT_SIZE = 9
 
 
 def to_latex_label(s):
@@ -901,6 +905,128 @@ class MPCGraphs:
 
         fig.subplots_adjust(left=0.1, right=0.97, top=0.87, bottom=0.1)
         return fig, (ax_energy, ax_tariff)
+
+    def plot_pump_gantt(self, methods=None, output_path=""):
+        """
+        Gantt chart of pump on/off status for multiple methods.
+        Args:
+            methods: list of labels to include; None = all labels
+        """
+        all_labels = self.trajectories['label'].unique().tolist()
+        if methods is None:
+            methods = all_labels
+
+        label_to_group = {}
+        for label in methods:
+            row = self.trajectories[self.trajectories['label'] == label]
+            if not row.empty:
+                label_to_group[label] = row['group'].iloc[0]
+        label_colors = build_label_colors(label_to_group)
+
+        # Build pump membership: rows=combo index, cols=physical pump ids
+        pump_cols = self.net.fsp.columns[self.net.fsp.columns.str.startswith('pump_')]
+        pump_membership = self.net.fsp[pump_cols].copy()
+        pump_membership.columns = pump_membership.columns.str.removeprefix('pump_')
+        pump_ids = list(pump_membership.columns)
+        fsp_positions = {combo: i for i, combo in enumerate(self.net.fsp.index)}
+        n_pumps = len(pump_ids)
+        n_methods = len(methods)
+
+        method_spacing = 1.0
+        pump_extra = 1.5
+        pump_stride = n_methods * method_spacing + pump_extra
+        lw = 8
+
+        def y_pos(pump_i, method_j):
+            return pump_i * pump_stride + method_j * method_spacing
+
+        pump_centers = [pump_i * pump_stride + (n_methods - 1) * method_spacing / 2 for pump_i in range(n_pumps)]
+        pe_bg = [PathEffects.Stroke(linewidth=lw + 3, foreground='lightgrey'), PathEffects.Normal()]
+
+        fig = plt.figure(figsize=(9, 1.2 * (n_pumps + 1)))
+        gs = GridSpec(2, 1, height_ratios=[1, 0.2], hspace=0.06, figure=fig)
+        ax_gantt = fig.add_subplot(gs[0])
+        ax_tariff = fig.add_subplot(gs[1], sharex=ax_gantt)
+
+        ref_df = self.trajectories[self.trajectories['label'] == methods[0]]
+        ref_time = pd.to_datetime(ref_df['time'])
+        dt_hour = (ref_time.iloc[1] - ref_time.iloc[0]).total_seconds() / 86400
+
+        t_ref_num = mdates.date2num(ref_time)
+        x_start = t_ref_num[0]
+        x_end = t_ref_num[-1] + dt_hour
+
+        for pump_i, pump_id in enumerate(pump_ids):
+            combos_with_pump = pump_membership.index[pump_membership[pump_id] > 0]
+
+            for method_j, label in enumerate(methods):
+                df = self.trajectories[self.trajectories['label'] == label]
+                if df.empty:
+                    raise ValueError(f"Label '{label}' not found. Available: {all_labels}")
+
+                y = y_pos(pump_i, method_j)
+                color = label_colors[label]
+                time = pd.to_datetime(df['time'])
+                t_num = mdates.date2num(time)
+
+                lc_bg = ax_gantt.hlines([y], x_start, x_end, linewidth=lw, colors='white')
+                lc_bg.set_path_effects(pe_bg)
+
+                pump_on = np.zeros(len(df))
+                for combo in combos_with_pump:
+                    col = f'x_fsp_{fsp_positions[combo]}'
+                    if col in df.columns:
+                        pump_on += df[col].values
+
+                mask = pump_on > 0.5
+                if mask.any():
+                    ax_gantt.hlines(
+                        np.full(mask.sum(), y),
+                        t_num[mask],
+                        t_num[mask] + dt_hour,
+                        linewidth=lw,
+                        colors=color
+                    )
+
+        ax_gantt.set_yticks(pump_centers)
+        ax_gantt.set_yticklabels([f'Pump {pid}' for pid in pump_ids])
+        y_lo = -pump_extra / 2
+        y_hi = (n_pumps - 1) * pump_stride + (n_methods - 1) * method_spacing + pump_extra / 2
+        ax_gantt.set_ylim(y_lo, y_hi)
+        ax_gantt.xaxis.grid(True, alpha=0.4, zorder=0)
+        ax_gantt.set_axisbelow(True)
+        plt.setp(ax_gantt.get_xticklabels(), visible=False)
+
+        ax_tariff.plot(ref_time, ref_df['realized_tariff'].values, color='k', linewidth=1.2, label='Realized')
+        ax_tariff.plot(ref_time, ref_df['predicted_tariff'].values, color='k', linewidth=0.9, linestyle='--',
+                       alpha=0.5, label='Predicted')
+        ax_tariff.set_ylabel('Tariff\n(€/MWh)')
+        ax_tariff.grid(zorder=0)
+        ax_tariff.set_axisbelow(True)
+        _loc = mdates.AutoDateLocator()
+        ax_tariff.xaxis.set_major_locator(_loc)
+        ax_tariff.xaxis.set_major_formatter(mdates.DateFormatter('%d'))
+        ax_tariff.set_xlabel(ref_time.iloc[0].strftime('%B %Y'))
+        ax_tariff.legend(loc='upper left', fontsize=LEG_FONT_SIZE, framealpha=0.9, ncol=2)
+
+        handles = [Line2D([0], [0], color=label_colors[lbl], linewidth=3.5, label=to_latex_label(lbl)) for lbl in methods]
+        ncol = min(len(handles), 5)
+        nrow = math.ceil(len(handles) / ncol)
+        idx = list(range(len(handles))) + [-1] * (nrow * ncol - len(handles))
+        order = [i for i in np.array(idx).reshape(nrow, ncol).T.flatten() if i >= 0]
+        handles = [handles[i] for i in order]
+        labels_leg = [h.get_label() for h in handles]
+
+        leg = fig.legend(handles, labels_leg, loc='upper left', bbox_to_anchor=(0.095, 0.96),
+                         bbox_transform=fig.transFigure, ncol=ncol, fontsize=LEG_FONT_SIZE, framealpha=0.9)
+        for line in leg.get_lines():
+            line.set_linewidth(2.5)
+
+        fig.subplots_adjust(left=0.1, right=0.96, top=0.87, bottom=0.1)
+        if output_path:
+            os.makedirs(output_path, exist_ok=True)
+            fig.savefig(os.path.join(output_path, 'pump_gantt.png'), dpi=300)
+        return fig, ax_gantt, ax_tariff
 
     def plot_duration_curve(self, method):
         """
