@@ -92,10 +92,15 @@ def build_label_colors(label_to_group):
         if len(labels_in_group) == 1:
             colors[labels_in_group[0]] = mcolors.to_rgba(style['color'])
         else:
-            cmap = mpl.colormaps[style['cmap']]
-            shades = np.linspace(0.45, 0.85, len(labels_in_group))
-            for i, label in enumerate(labels_in_group):
-                colors[label] = cmap(shades[i])
+            cmap_val = style['cmap']
+            if isinstance(cmap_val, list):
+                for i, label in enumerate(labels_in_group):
+                    colors[label] = mcolors.to_rgba(cmap_val[i % len(cmap_val)])
+            else:
+                cmap = mpl.colormaps[cmap_val]
+                shades = np.linspace(0.45, 0.85, len(labels_in_group))
+                for i, label in enumerate(labels_in_group):
+                    colors[label] = cmap(shades[i])
     return colors
 
 
