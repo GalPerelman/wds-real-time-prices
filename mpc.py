@@ -193,11 +193,11 @@ class MPC:
 
             fsp_power = self.net.fsp['power'].values
             step_power = x_fsp @ fsp_power  # (wait,) total kW per implemented step
-            pred_cost = (step_power * self.last_forecast['tariff'].values[:self.wait] / 1000).sum()
+            pred_cost = (step_power * self.last_forecast[self.prices_col].values[:self.wait] / 1000).sum()
             if self.simulator is not None:
                 actual_cost = df['epanet_cost'].sum()
             else:
-                actual_cost = (step_power * realization['tariff'].values[:self.wait] / 1000).sum()
+                actual_cost = (step_power * realization[self.prices_col].values[:self.wait] / 1000).sum()
             bar.set_postfix_str(
                 f"{self.current_time.strftime('%m-%d %H:%M')} | {status} | "
                 f"pred: {pred_cost:.1f} | actual: {actual_cost:.1f} | infeasible: {self.n_infeasible}"
@@ -236,8 +236,8 @@ class MPC:
             "solver_mip_gap": np.repeat(solver_mip_gap, self.wait),
             **{f"x_fsp_{i}": x_fsp[:, i] for i in range(self.net.n_fsp)},
             **{f"x_vsp_{i}": x_vsp[:, i] for i in range(self.net.n_vsp)},
-            "predicted_tariff": self.last_forecast.loc[realization.index, 'tariff'].values[:self.wait],
-            "realized_tariff": realization['tariff'].values[:self.wait],
+            "predicted_tariff": self.last_forecast.loc[realization.index, self.prices_col].values[:self.wait],
+            "realized_tariff": realization[self.prices_col].values[:self.wait],
             **{f"predicted_demand_{tank_id}":
                    self.last_forecast.loc[realization.index, tank_data["demand"]].values[:self.wait]
                for tank_id, tank_data in self.net.tanks.iterrows()},
@@ -263,7 +263,7 @@ class MPC:
             ),
             **(
                 {"epanet_cost": (epanet_energy.values *
-                                 realization['tariff'].values[:self.wait, np.newaxis] / 1000).sum(axis=1)}
+                                 realization[self.prices_col].values[:self.wait, np.newaxis] / 1000).sum(axis=1)}
                 if epanet_energy is not None else {}
             ),
             **(

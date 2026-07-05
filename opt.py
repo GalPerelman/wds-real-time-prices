@@ -205,8 +205,9 @@ class BaseOptModel:
         power_blocks = np.tile(np.hstack([self.network.fsp['power'].values.reshape(1, -1),
                                           np.zeros((1, self.n_vsp))]), self.t)
         power = power_blocks.ravel()
+        price_col = self.network.tariffs.columns[0]
         tariff_blocks = np.array([np.r_[np.repeat(val, self.n_fsp), np.zeros(self.n_vsp)]
-                                  for val in self.network.tariffs['tariff'].values[:self.t]])
+                                  for val in self.network.tariffs[price_col].values[:self.t]])
 
         tariff = tariff_blocks.ravel()
         return power, tariff
@@ -271,12 +272,12 @@ class BaseOptModel:
         self.x_value = self.x.value
 
     def get_nominal(self):
-        tariff = self.network.tariffs["tariff"].values[:self.t]
+        tariff = self.network.tariffs[self.network.tariffs.columns[0]].values[:self.t]
         demands = self.network.demands.values[:self.t, :].flatten(order='F')
         return np.hstack([tariff, demands])
 
     def preprocess_data_for_uncertainty_sets(self):
-        tariff = self.network.tariffs["tariff"]
+        tariff = self.network.tariffs[self.network.tariffs.columns[0]]
         demands = self.network.demands
         tariff.index = pd.to_datetime(tariff.index, utc=True)
         demands.index = pd.to_datetime(demands.index, utc=True)
@@ -791,8 +792,6 @@ class SP(BaseOptModel):
         constraints = cvar_constraints + [a[:m * 2, :] @ self.x <= b_safe, a[m * 2:, :] @ self.x <= b[m * 2:]]
 
         self.problem = cp.Problem(cp.Minimize(obj), constraints)
-
-
 
 
 class Simulation:

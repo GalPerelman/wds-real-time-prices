@@ -587,7 +587,8 @@ def _run_mpc_sweep_from_config(config, dm, uset_estimator, config_path=None):
 def run_mpc_sweep(config_path):
     config = cfg.load_config(config_path)
 
-    dm = data_manager.DataManager(config.data.demands_path, config.data.tariffs_path)
+    dm = data_manager.DataManager(config.data.demands_path, config.data.tariffs_path,
+                                  prices_col=config.columns.prices_col)
     dm.set_forecast_training_window(
         start_date=config.training.forecast.start,
         end_date=config.training.forecast.end
@@ -610,7 +611,8 @@ def run_from_config(config_path):
     exp = config.experiment
 
     # Setup DataManager
-    dm = data_manager.DataManager(config.data.demands_path, config.data.tariffs_path)
+    dm = data_manager.DataManager(config.data.demands_path, config.data.tariffs_path,
+                                  prices_col=config.columns.prices_col)
     dm.set_forecast_training_window(
         start_date=config.training.forecast.start,
         end_date=config.training.forecast.end

@@ -15,9 +15,10 @@ class DataManager:
 
     Also includes visualization and analysis methods.
     """
-    def __init__(self, demands_data_path, tariffs_data_path):
+    def __init__(self, demands_data_path, tariffs_data_path, prices_col):
         self.demands_data_path = demands_data_path
         self.tariffs_data_path = tariffs_data_path
+        self.prices_col = prices_col
 
         self.demands = None
         self.tariffs = None
@@ -29,7 +30,7 @@ class DataManager:
 
     def load_data(self, start_date=None, end_date=None):
         demands = pd.read_csv(self.demands_data_path, index_col=0)
-        tariffs = pd.read_csv(self.tariffs_data_path, index_col=0)[[self.tariff_col]]
+        tariffs = pd.read_csv(self.tariffs_data_path, index_col=0)[[self.prices_col]]
 
         # Validate tz-awareness on raw strings before conversion (utc=True would silently accept tz-naive)
         if pd.to_datetime(tariffs.index[0]).tzinfo is None:
@@ -97,7 +98,7 @@ class DataManager:
         for i, col in enumerate(self.data.columns):
             axes[i].plot(data[col])
             axes[i].set_title(col)
-            if col == "tariff":
+            if col == self.prices_col:
                 axes[i].set_ylabel("Tariff (€/MWh)")
             else:
                 axes[i].set_ylabel("Demand ($m^3/hr$)")
@@ -163,7 +164,7 @@ class DataManager:
 
             axes_hist[i].hist(data[col], bins=25, edgecolor='k', alpha=0.5)
             axes_hist[i].set_ylabel('Count')
-            if col == "tariff":
+            if col == self.prices_col:
                 axes_hist[i].set_xlabel("Tariff (€/MWh)")
                 axes_lines[i].set_ylabel("Tariff (€/MWh)")
                 axes_box[i].set_ylabel("Tariff (€/MWh)")
@@ -186,7 +187,7 @@ class DataManager:
 
 if __name__ == "__main__":
     # exploratory data analysis
-    dm = DataManager('data/multi_tank/demands2022.csv', 'data/multi_tank/tariffs2022.csv')
+    dm = DataManager('data/multi_tank/demands.csv', 'data/multi_tank/tariffs.csv')
     dm.visualize_data()
     dm.hourly_distribution()
     plt.show()

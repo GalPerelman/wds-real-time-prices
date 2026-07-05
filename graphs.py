@@ -132,7 +132,8 @@ class OptGraphs:
             ax.bar(range(1, len(demands) + 1), demands, edgecolor='k', zorder=5)
 
         if plot_tariff:
-            tariff = self.opt_model.network.tariffs['tariff'].values[:self.opt_model.t]
+            price_col = self.opt_model.network.tariffs.columns[0]
+            tariff = self.opt_model.network.tariffs[price_col].values[:self.opt_model.t]
             ax.bar(range(1, len(tariff) + 1), tariff, edgecolor='k', zorder=5)
 
         ax.hlines(tank_data['init_vol'], 0, self.t + 1, colors='k', linestyles='--')
@@ -171,7 +172,7 @@ class OptGraphs:
         if plot_tariff:
             cost_sample = sample[: self.t:, :]
             axes[-1].plot(cost_sample, alpha=0.1, c='C0')
-            axes[-1].plot(self.opt_model.network.tariffs['tariff'].values[:self.t], c='k')
+            axes[-1].plot(self.opt_model.network.tariffs[self.opt_model.network.tariffs.columns[0]].values[:self.t], c='k')
             axes[-1].grid(zorder=0)
             # axes[-1].bar(range(self.t), self.opt_model.network.tariffs['tariff'].values[:self.t], edgecolor='k', alpha=0.6)
             axes[-1].set_ylabel('Tariff (€/MWh)')
