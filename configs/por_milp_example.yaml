@@ -4,9 +4,9 @@
 
 data:
   # data files need to have a datetime index column with time zone aware format
-  network_path: "data/multi_tank"
-  demands_path: "data/multi_tank/demands.csv"
-  tariffs_path: "data/multi_tank/tariffs.csv"
+  network_path: "data/price_ostfeld"
+  demands_path: "data/price_ostfeld/demands.csv"
+  tariffs_path: "data/price_ostfeld/tariffs.csv"
 
 columns:
   prices_col: "tariff"

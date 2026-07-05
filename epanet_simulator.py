@@ -230,7 +230,7 @@ if __name__ == '__main__':
     from network import LPNetwork
     from opt import BaseOptModel
 
-    DATA_DIR = 'data/multi_tank'
+    DATA_DIR = 'data/price_ostfeld'
     T = 24
     net = LPNetwork(DATA_DIR)
 
@@ -256,7 +256,7 @@ if __name__ == '__main__':
         )
 
     # Run EPANET simulator with the same LP policy
-    sim = EPANETSimulator(net, f'{DATA_DIR}/multi_tank.inp', prices_col='tariff', demand_cols=['a', 'b', 'c'])
+    sim = EPANETSimulator(net, f'{DATA_DIR}/price_ostfeld.inp', prices_col='tariff', demand_cols=['a', 'b', 'c'])
     sim.initialize(realizations)
     tank_vols_epanet, energy = sim.step(x_fsp, wait=T)
 

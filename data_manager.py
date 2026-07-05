@@ -187,7 +187,7 @@ class DataManager:
 
 if __name__ == "__main__":
     # exploratory data analysis
-    dm = DataManager('data/multi_tank/demands.csv', 'data/multi_tank/tariffs.csv')
+    dm = DataManager('data/price_ostfeld/demands.csv', 'data/price_ostfeld/tariffs.csv')
     dm.visualize_data()
     dm.hourly_distribution()
     plt.show()
