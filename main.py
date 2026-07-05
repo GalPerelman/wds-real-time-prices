@@ -205,7 +205,7 @@ def por(uset_data, forecast, methods, net_path, t=24, n=500, milp=False, plot=Tr
     return df
 
 
-def run_static_optimization(model_class, forecast, uset_estimator, net_path='data/multi_tank',
+def run_static_optimization(model_class, forecast, uset_estimator, net_path='data/price_ostfeld',
                             t=24, n_sim=500, milp=True, plot=True, final_vol_constraint=True,
                             solver_params=None, n_binary_steps=None, **model_params):
     """
@@ -381,6 +381,21 @@ def _compute_mpc_metrics(mpc):
     return _compute_metrics_from_df(results, net, n_infeasible=mpc.n_infeasible)
 
 
+def _merge_kwargs(common_kwargs, method_params):
+    """Merge common and per-method kwargs with method params taking priority.
+
+    solver_params is deep-merged so options-level defaults (e.g. TimeLimit) are
+    not silently dropped when the method sweep overrides Threads or Seed.
+    """
+    merged = {**common_kwargs, **method_params}
+    if 'solver_params' in common_kwargs and 'solver_params' in method_params:
+        merged['solver_params'] = {
+            **(common_kwargs['solver_params'] or {}),
+            **(method_params['solver_params'] or {}),
+        }
+    return merged
+
+
 def _run_method_worker(worker_args):
     """Module-level worker for parallel MPC sweep. Must be at module level for Windows multiprocessing."""
     method = worker_args['method']
@@ -409,7 +424,7 @@ def _run_method_worker(worker_args):
     print(f"  [{label}] running...")
     mpc = run_mpc_experiment(opt_method=opt_method, simulator=simulator,
                              final_vol_constraint=final_vol_constraint,
-                             **common_kwargs, **params)
+                             **{**common_kwargs, **params})
     mpc_metrics = _compute_mpc_metrics(mpc)
     problem_stats = extract_problem_stats(mpc.opt_model)
 
@@ -551,7 +566,7 @@ def _run_mpc_sweep_from_config(config, dm, uset_estimator, config_path=None):
             print(f"  [{label}] running...")
             mpc = run_mpc_experiment(opt_method=opt_method, simulator=simulator,
                                      final_vol_constraint=opts.get('final_vol_constraint', True),
-                                     **common_kwargs, **params)
+                                     **{**common_kwargs, **params})
             mpc_metrics = _compute_mpc_metrics(mpc)
             row = {'label': label, 'group': group, 'opt_method': opt_method, **params, **mpc_metrics}
             rows.append(row)
