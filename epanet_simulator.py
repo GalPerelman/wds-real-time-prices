@@ -51,7 +51,7 @@ class EPANETSimulator:
 
         self._is_open = False
         self._elapsed_h = 0.0
-        self._recorded_schedule = pd.DataFrame(columns=self.fsp.index)
+        self._recorded_schedule = None
 
     def initialize(self, realizations):
         """
@@ -101,7 +101,7 @@ class EPANETSimulator:
         self.d.initializeHydraulicAnalysis()
         self._elapsed_h = 0.0
         self._is_open = True
-        self._recorded_schedule = pd.DataFrame(columns=self.fsp.index)
+        self._recorded_schedule = None
 
     def step(self, x_fsp, wait):
         """
@@ -168,7 +168,11 @@ class EPANETSimulator:
             vols = self.d.getNodeTankVolume(self.tank_epanet_idx.tolist())
             tank_volumes.iloc[h - 1] = pd.Series(vols, index=self.tanks.index)
 
-        self._recorded_schedule = pd.concat([self._recorded_schedule, x_fsp.iloc[:wait]], ignore_index=True)
+        chunk = x_fsp.iloc[:wait]
+        if self._recorded_schedule is None:
+            self._recorded_schedule = chunk.reset_index(drop=True)
+        else:
+            self._recorded_schedule = pd.concat([self._recorded_schedule, chunk], ignore_index=True)
         return tank_volumes, energy
 
     def close(self):
@@ -191,10 +195,8 @@ class EPANETSimulator:
         The combination schedule accumulated across all step() calls is translated
         to physical pump on/off patterns (one per EPANET pump) and written into the
         .inp file so the full policy is visible in the EPANET GUI.
-        The output is stripped of EPANET 2.3-only fields for compatibility with
-        the EPANET 2.2 GUI.
         """
-        if not self._recorded_schedule.empty:
+        if self._recorded_schedule is not None and not self._recorded_schedule.empty:
             # Set simulation duration to match recorded steps
             total_hours = len(self._recorded_schedule)
             self.d.setTimeSimulationDuration(total_hours * 3600)
