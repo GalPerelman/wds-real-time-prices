@@ -18,7 +18,8 @@ from opt import BaseOptModel, RO, SP, Simulation
 from mpc import MPC
 from epanet_simulator import EPANETSimulator
 
-from concurrent.futures import ProcessPoolExecutor
+import re
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from typing import Dict, List, Any, Optional
 from itertools import product
 
@@ -408,6 +409,42 @@ def _run_method_worker(worker_args):
             'params': params, 'metrics': mpc_metrics, 'trajectory': traj}
 
 
+def _label_to_filename(label):
+    safe = re.sub(r'[^\w.]', '_', label)
+    return safe[:60]
+
+
+def consolidate_sweep_output(output_dir):
+    """
+    Merge per-method traj_*.csv / sum_*.csv files into summary.csv + trajectories.csv,
+    then delete the per-method files.
+
+    Useful when a sweep was interrupted and the final consolidated files were not written,
+    or to manually clean up a directory that still has per-method checkpoint files.
+
+    Returns (summary_df, trajectories_df), or (None, None) if no per-method files exist.
+    """
+    output_dir = Path(output_dir)
+    sum_files = sorted(output_dir.glob('sum_*.csv'))
+    traj_files = sorted(output_dir.glob('traj_*.csv'))
+
+    if not sum_files:
+        print(f"  No per-method files found in {output_dir}")
+        return None, None
+
+    summary = pd.concat([pd.read_csv(f) for f in sum_files], ignore_index=True)
+    trajectories = pd.concat([pd.read_csv(f) for f in traj_files], ignore_index=True) if traj_files else pd.DataFrame()
+
+    summary.to_csv(output_dir / 'summary.csv', index=False)
+    trajectories.to_csv(output_dir / 'trajectories.csv', index=False)
+
+    for f in sum_files + traj_files:
+        f.unlink()
+
+    print(f"  Consolidated {len(sum_files)} method files -> summary.csv + trajectories.csv, deleted per-method files")
+    return summary, trajectories
+
+
 def _run_mpc_sweep_from_config(config, dm, uset_estimator, config_path=None):
     exp = config.experiment
     mpc_cfg = exp.mpc
@@ -449,30 +486,40 @@ def _run_mpc_sweep_from_config(config, dm, uset_estimator, config_path=None):
     trajectory_parts = []
 
     if n_workers > 1:
-        # Workers return data only — all file writes happen in the main process after map() completes.
-        # Intermediate per-method saves are skipped; outputs are written once at the end.
-        worker_args = [
-            {
-                'method': method,
-                'common_kwargs': common_kwargs,
-                'sim_cfg': sim_cfg,
-                'network_path': config.data.network_path,
-                'prices_col': config.columns.prices_col,
-                'demand_cols': config.columns.demand_cols,
-                'final_vol_constraint': opts.get('final_vol_constraint', True),
-            }
-            for method in methods
-        ]
+        futures_to_method = {}
         with ProcessPoolExecutor(max_workers=n_workers) as executor:
-            for result in executor.map(_run_method_worker, worker_args):
-                rows.append({'label': result['label'], 'group': result['group'],
-                             'opt_method': result['opt_method'], **result['params'], **result['metrics']})
-                trajectory_parts.append(result['trajectory'])
+            for method in methods:
+                futures_to_method[executor.submit(_run_method_worker, {
+                    'method': method,
+                    'common_kwargs': common_kwargs,
+                    'sim_cfg': sim_cfg,
+                    'network_path': config.data.network_path,
+                    'prices_col': config.columns.prices_col,
+                    'demand_cols': config.columns.demand_cols,
+                    'final_vol_constraint': opts.get('final_vol_constraint', True),
+                })] = method
+
+            for future in as_completed(futures_to_method):
+                result = future.result()
+                label = result['label']
+                label_safe = _label_to_filename(label)
+                row = {'label': label, 'group': result['group'], 'opt_method': result['opt_method'],
+                       **result['params'], **result['metrics']}
+                rows.append(row)
+                traj = result['trajectory']
+                trajectory_parts.append(traj)
+                if output_dir is not None:
+                    traj.to_csv(Path(output_dir) / f"traj_{label_safe}.csv", index=False)
+                    pd.DataFrame([row]).to_csv(Path(output_dir) / f"sum_{label_safe}.csv", index=False)
+                    pd.DataFrame(rows).to_csv(f"{output_dir}/summary.csv", index=False)
+                    print(f"  [{label}] saved to: {output_dir}/")
     else:
         for method in methods:
             label = method['label']
             opt_method = method['opt_method']
             params = method.get('params', {})
+            group = method.get('group', label)
+            label_safe = _label_to_filename(label)
 
             simulator = None
             if sim_cfg:
@@ -485,12 +532,12 @@ def _run_mpc_sweep_from_config(config, dm, uset_estimator, config_path=None):
                 )
 
             print(f"  [{label}] running...")
-            group = method.get('group', label)
             mpc = run_mpc_experiment(opt_method=opt_method, simulator=simulator,
                                      final_vol_constraint=opts.get('final_vol_constraint', True),
                                      **common_kwargs, **params)
             mpc_metrics = _compute_mpc_metrics(mpc)
-            rows.append({'label': label, 'group': group, 'opt_method': opt_method, **params, **mpc_metrics})
+            row = {'label': label, 'group': group, 'opt_method': opt_method, **params, **mpc_metrics}
+            rows.append(row)
 
             traj = mpc.results.copy()
             traj['model'] = opt_method
@@ -499,8 +546,9 @@ def _run_mpc_sweep_from_config(config, dm, uset_estimator, config_path=None):
             trajectory_parts.append(traj)
 
             if output_dir is not None:
+                traj.to_csv(Path(output_dir) / f"traj_{label_safe}.csv", index=False)
+                pd.DataFrame([row]).to_csv(Path(output_dir) / f"sum_{label_safe}.csv", index=False)
                 pd.DataFrame(rows).to_csv(f"{output_dir}/summary.csv", index=False)
-                pd.concat(trajectory_parts, ignore_index=True).to_csv(f"{output_dir}/trajectories.csv", index=False)
                 print(f"  [{label}] saved to: {output_dir}/")
 
     results = pd.DataFrame(rows)
@@ -509,6 +557,8 @@ def _run_mpc_sweep_from_config(config, dm, uset_estimator, config_path=None):
     if output_dir is not None:
         pd.DataFrame(rows).to_csv(f"{output_dir}/summary.csv", index=False)
         all_traj.to_csv(f"{output_dir}/trajectories.csv", index=False)
+        for f in list(Path(output_dir).glob('sum_*.csv')) + list(Path(output_dir).glob('traj_*.csv')):
+            f.unlink()
         print(f"  All methods complete. Outputs in: {output_dir}/")
 
         net = LPNetwork(config.data.network_path)
