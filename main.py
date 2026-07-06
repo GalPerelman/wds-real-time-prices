@@ -812,18 +812,20 @@ def _run_mpc_from_config(config, dm, uset_estimator):
 
 if __name__ == "__main__":
     """
-    python main.py --config configs/static_experiment.yaml
+    python main.py --config configs/exp1.yaml
+    python main.py --config configs/exp1.yaml configs/exp2.yaml configs/exp3.yaml
     """
     parser = argparse.ArgumentParser(description='WDS Optimization')
-    parser.add_argument('--config', '-c', type=str, help='Path to YAML configuration file')
+    parser.add_argument('--config', '-c', nargs='+', help='Path(s) to YAML configuration file(s)')
     args = parser.parse_args()
 
-    print(f"Running experiment from: {args.config}")
-    result = run_from_config(args.config)
-    if isinstance(result, pd.DataFrame):
-        print(result)
-    elif isinstance(result, dict):
-        for k, v in result.items():
-            print(f"  {k}: {v}")
+    for config_path in args.config:
+        print(f"\nRunning experiment from: {config_path}")
+        result = run_from_config(config_path)
+        if isinstance(result, pd.DataFrame):
+            print(result)
+        elif isinstance(result, dict):
+            for k, v in result.items():
+                print(f"  {k}: {v}")
 
     plt.show()
