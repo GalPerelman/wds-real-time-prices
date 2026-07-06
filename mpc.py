@@ -17,7 +17,7 @@ import forecast
 class MPC:
     def __init__(self, net_path, opt_method, db, uset_estimator, start_datetime, step_horizon, wait, experiment_horizon,
                  realizations, prices_col, demand_cols, forecast_method, milp, holiday_country, final_vol_constraint,
-                 n_binary_steps=None, forecast_params=None, simulator=None, **kwargs):
+                 n_binary_steps=None, forecast_params=None, simulator=None, export_inp_path=None, **kwargs):
         self.net_path = net_path
         self.opt_method = opt_method
         self.db = db
@@ -59,6 +59,7 @@ class MPC:
         self.n_infeasible = 0  # count of iterations where solver failed to find optimal solution
 
         self.simulator = simulator
+        self.export_inp_path = export_inp_path
         self.final_vol_constraint = final_vol_constraint
 
         self.latest_x_fsp = None  # fallback: full-horizon FSP schedule from last successful solve
@@ -210,6 +211,8 @@ class MPC:
             )
 
         if self.simulator is not None:
+            if self.export_inp_path is not None:
+                self.simulator.export(self.export_inp_path)
             self.simulator.close()
 
     def _compute_violations(self, tank_volumes_dict):

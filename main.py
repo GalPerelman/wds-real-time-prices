@@ -242,7 +242,7 @@ def run_static_optimization(model_class, forecast, uset_estimator, net_path='dat
 def run_mpc_experiment(dm, uset_estimator, realizations, prices_col, demand_cols, opt_method,
                        start_datetime, step_horizon, wait, experiment_horizon,
                        forecast_method, net_path, milp, plot, holiday_country, final_vol_constraint,
-                       n_binary_steps=None, forecast_params=None, simulator=None, **opt_params):
+                       n_binary_steps=None, forecast_params=None, simulator=None, export_inp_path=None, **opt_params):
     """
     Run an MPC rolling horizon experiment.
 
@@ -270,6 +270,7 @@ def run_mpc_experiment(dm, uset_estimator, realizations, prices_col, demand_cols
               prices_col=prices_col, demand_cols=demand_cols,
               forecast_method=forecast_method, forecast_params=forecast_params,
               milp=milp, holiday_country=holiday_country, simulator=simulator,
+              export_inp_path=export_inp_path,
               final_vol_constraint=final_vol_constraint, n_binary_steps=n_binary_steps,
               **opt_params)
     mpc.init_opt_model()
@@ -410,6 +411,7 @@ def _run_method_worker(worker_args):
     opt_method = method['opt_method']
     params = method.get('params', {})
     group = method.get('group', label)
+    export_inp_path = worker_args.get('export_inp_path')
 
     simulator = None
     if sim_cfg:
@@ -424,7 +426,8 @@ def _run_method_worker(worker_args):
     print(f"  [{label}] running...")
     mpc = run_mpc_experiment(opt_method=opt_method, simulator=simulator,
                              final_vol_constraint=final_vol_constraint,
-                             **{**common_kwargs, **params})
+                             export_inp_path=export_inp_path,
+                             **_merge_kwargs(common_kwargs, params))
     mpc_metrics = _compute_mpc_metrics(mpc)
     problem_stats = extract_problem_stats(mpc.opt_model)
 
@@ -519,15 +522,20 @@ def _run_mpc_sweep_from_config(config, dm, uset_estimator, config_path=None):
         futures_to_method = {}
         with ProcessPoolExecutor(max_workers=n_workers) as executor:
             for method in methods:
+                label_safe = _label_to_filename(method['label'])
+                export_inp_path = None
+                if opts.get('export_inp') and output_dir:
+                    export_inp_path = str(Path(output_dir) / f"sched_{label_safe}.inp")
                 futures_to_method[executor.submit(_run_method_worker, {
-                    'method': method,
-                    'common_kwargs': common_kwargs,
-                    'sim_cfg': sim_cfg,
-                    'network_path': config.data.network_path,
-                    'prices_col': config.columns.prices_col,
-                    'demand_cols': config.columns.demand_cols,
-                    'final_vol_constraint': opts.get('final_vol_constraint', True),
-                })] = method
+                        'method': method,
+                        'common_kwargs': common_kwargs,
+                        'sim_cfg': sim_cfg,
+                        'network_path': config.data.network_path,
+                        'prices_col': config.columns.prices_col,
+                        'demand_cols': config.columns.demand_cols,
+                        'final_vol_constraint': opts.get('final_vol_constraint', True),
+                        'export_inp_path': export_inp_path,
+                    })] = method
 
             for future in as_completed(futures_to_method):
                 result = future.result()
@@ -563,10 +571,15 @@ def _run_mpc_sweep_from_config(config, dm, uset_estimator, config_path=None):
                     demand_cols=config.columns.demand_cols,
                 )
 
+            export_inp_path = None
+            if opts.get('export_inp') and output_dir:
+                export_inp_path = str(Path(output_dir) / f"sched_{label_safe}.inp")
+
             print(f"  [{label}] running...")
             mpc = run_mpc_experiment(opt_method=opt_method, simulator=simulator,
                                      final_vol_constraint=opts.get('final_vol_constraint', True),
-                                     **{**common_kwargs, **params})
+                                     export_inp_path=export_inp_path,
+                                     **_merge_kwargs(common_kwargs, params))
             mpc_metrics = _compute_mpc_metrics(mpc)
             row = {'label': label, 'group': group, 'opt_method': opt_method, **params, **mpc_metrics}
             rows.append(row)
