@@ -1,0 +1,86 @@
+data:
+  # data files need to have a datetime index column with time zone aware format
+  network_path: "data/price_ostfeld"
+  demands_path: "data/price_ostfeld/demands.csv"
+  tariffs_path: "data/price_ostfeld/tariffs.csv"
+
+columns:
+  prices_col: "tariff"  # correspond to Volume Weighted Average Price column from the raw dataset
+  demand_cols: ["a", "b", "c"]
+
+training:
+  forecast:
+    start: "2021-01-01"
+    end: "2022-12-31"
+  uncertainty:
+    start: "2022-10-01"
+    end: "2022-12-31"
+
+forecast:
+  model: "rf"
+  holiday_country: "HU"
+
+experiment:
+  type: "mpc_sweep"
+
+  experiment_period:
+    start: "2023-01-01 00:00"
+    horizon: 744 # 31 days
+
+  mpc:
+    step_horizon: 24  # lookahead window (hours)
+    wait: 1           # hours between re-optimizations (implemented steps)
+
+  methods:
+    - group: "LP"
+      opt_method: "lp"
+
+    - group: "RO-Ellipsoid"
+      opt_method: "ro"
+      params:
+        uncertainty_set: "ellipsoid"
+      sweep:
+        omega: [0.5, 1.0, 1.5, 2.0, 2.5, 3.0]
+
+    - group: "RO-BOU"
+      opt_method: "ro"
+      params:
+        uncertainty_set: "bou"
+      sweep:
+        gamma: [ [ 4, 2 ], [ 4, 6 ], [ 4, 10 ], [ 4, 14 ], [ 4, 18 ] ]
+
+    - group: "RO-BOU-1"
+      opt_method: "ro"
+      params:
+        uncertainty_set: "bou"
+      sweep:
+        gamma: [ [ 8, 2 ], [ 8, 6 ], [ 8, 10 ], [ 8, 14 ], [ 8, 18 ] ]
+
+    - group: "RO-BOU-2"
+      opt_method: "ro"
+      params:
+        uncertainty_set: "bou"
+      sweep:
+        gamma: [ [ 12, 2 ], [ 12, 6 ], [ 12, 10 ], [ 12, 14 ], [ 12, 18 ] ]
+
+    - group: "CC-SP"
+      opt_method: "sp"
+      sweep:
+        alpha: [[0.80, 0.8], [0.85, 0.85], [0.90, 0.9], [0.95, 0.95], [0.99, 0.99]]
+        lambda_cvar: [0, 0.01, 0.1, 1, 10]
+
+  options:
+    milp: true
+    plot: false
+    output_dir: "outputs/01_jan2023_rf"
+    export_inp: true
+    final_vol_constraint: false
+
+    simulator:
+      inp_file: "data/price_ostfeld/price_ostfeld.inp"
+
+    n_workers: 4
+
+    solver_params:
+      solver_display: false
+      Threads: 2
