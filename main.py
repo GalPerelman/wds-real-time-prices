@@ -442,7 +442,8 @@ def _run_method_worker(worker_args):
 
 
 def _label_to_filename(label):
-    safe = re.sub(r'[^\w.]', '_', label)
+    safe = re.sub(r'[^a-zA-Z0-9]', '-', label.lower())
+    safe = re.sub(r'-+', '-', safe).strip('-')
     return safe[:60]
 
 
