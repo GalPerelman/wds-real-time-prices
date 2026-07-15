@@ -410,6 +410,8 @@ class MPCGraphs:
     def __init__(self, trajectories, net, inp_file=None):
         self.trajectories = trajectories
         self.trajectories['group'] = self.trajectories['label'].apply(derive_group)
+        self.trajectories['time'] = pd.to_datetime(self.trajectories['time'])
+
         self.net = net
         self._epanet_bounds = None
         self._tank_areas = None
@@ -574,12 +576,13 @@ class MPCGraphs:
         fig.subplots_adjust(left=0.1, right=0.95, top=0.92, bottom=0.15)
         return fig, ax
 
-    def plot_tank_trajectories(self, methods=None, show_opt=False, levels=False, tank_ids=None, output_path=""):
+    def plot_tank_trajectories(self, methods=None, show_opt=False, mark_violations=False, levels=False,
+                               epanet_bounds=True, tank_ids=None, start_time=None, end_time=None, output_path=""):
         """
         Plot tank volume (or water level) trajectories over the full MPC experiment.
         Args:
             methods:  list of labels to include; None = all labels
-            show_opt: if True and EPANET columns are present, overlay the
+            show_opt: if True and EPANET columns are present, add the
                       optimizer (LP mass-balance) volumes as dashed lines.
             levels:   if True, convert volumes to water levels (m) using tank diameters from net.tanks['diameter'].
         """
@@ -632,8 +635,11 @@ class MPCGraphs:
 
             for label in methods:
                 df = self.trajectories[self.trajectories['label'] == label]
+                df = df.loc[(df['time'] >= start_time) & (df['time'] <= end_time)] if start_time and end_time else df
+
                 if df.empty:
                     raise ValueError(f"Label '{label}' not found. Available: {all_labels}")
+
                 color = label_colors[label]
                 time = pd.to_datetime(df['time'])
                 vol = df[vol_col_key].values
@@ -648,15 +654,15 @@ class MPCGraphs:
 
                 # Violation markers: detect in volume space, plot in display space
                 viol_mask = (vol < tank_data['min_vol']) | (vol > tank_data['max_vol'])
-                if viol_mask.any():
+                if viol_mask.any() and mark_violations:
                     ax.scatter(time[viol_mask], vol[viol_mask], color=color,
                                marker='o', s=50, linewidths=1.5, zorder=5, facecolor="none")
 
             ax.axhline(_conv(tank_data['min_vol']), color='k', linestyle='--', linewidth=0.9, zorder=1)
             ax.axhline(_conv(tank_data['max_vol']), color='k', linestyle='--', linewidth=0.9, zorder=1)
-            if self._epanet_bounds and tank_id in self._epanet_bounds:
-                ax.axhline(_conv(self._epanet_bounds[tank_id]), color='grey', linestyle=':',
-                           linewidth=0.8, zorder=1)
+            if self._epanet_bounds and tank_id in self._epanet_bounds and epanet_bounds:
+                ax.axhline(_conv(self._epanet_bounds[tank_id]), color='grey', linestyle=(0, (1, 1)), lw=1, zorder=1)
+
             ylabel_unit = 'm' if levels else '$m^3$'
             if levels:
                 metric = 'Level'
@@ -670,11 +676,13 @@ class MPCGraphs:
             plt.setp(ax.get_xticklabels(), visible=False)
 
         # Tariff panel - realized and predicted are identical across methods, use first
-        ref_df = self.trajectories[self.trajectories['label'] == methods[0]]
-        ref_time = pd.to_datetime(ref_df['time'])
-        tariff_ax.plot(ref_time, ref_df['realized_tariff'].values,
+        df = self.trajectories[self.trajectories['label'] == methods[0]].copy()
+        df = df.loc[(df['time'] >= start_time) & (df['time'] <= end_time)] if start_time and end_time else df
+
+        ref_time = pd.to_datetime(df['time'])
+        tariff_ax.plot(ref_time, df['realized_tariff'].values,
                        color='k', linewidth=1.2, label='Realized')
-        tariff_ax.plot(ref_time, ref_df['predicted_tariff'].values,
+        tariff_ax.plot(ref_time, df['predicted_tariff'].values,
                        color='k', linewidth=0.9, linestyle='--', alpha=0.5, label='Predicted')
         tariff_ax.set_ylabel('Tariff\n(€/MWh)')
         tariff_ax.grid(zorder=0)
@@ -683,34 +691,38 @@ class MPCGraphs:
         tariff_ax.xaxis.set_major_locator(_loc)
         tariff_ax.xaxis.set_major_formatter(mdates.DateFormatter('%d'))
         tariff_ax.set_xlabel(ref_time.iloc[0].strftime('%B %Y'))
-        tariff_ax.legend(loc='upper left', fontsize=LEG_FONT_SIZE, framealpha=0.9, ncol=2)
+        tariff_ax.legend(loc='lower right', fontsize=LEG_FONT_SIZE, framealpha=0.9, ncol=2)
 
         # Main legend: methods + opt dashed line + bounds — no tariff (handled locally above)
         handles, labels_leg = tank_axes[0].get_legend_handles_labels()
         if show_opt and has_epanet:
             handles += [Line2D([0], [0], color='grey', linewidth=1.8, linestyle='--')]
             labels_leg += ['Opt (LP)']
+
         handles += [Line2D([0], [0], color='k', linewidth=1.8, linestyle='--')]
         labels_leg += ['Min/Max bounds']
 
-        ncol = min(len(handles), 5)
+        handles += [Line2D([0], [0], color='grey', linewidth=1, linestyle=(0, (1, 1)))]
+        labels_leg += ['EPANET Max']
+
+        ncol = min(math.ceil(len(handles)/2), 4)
         nrow = math.ceil(len(handles) / ncol)
         idx = list(range(len(handles))) + [-1] * (nrow * ncol - len(handles))
         order = [i for i in np.array(idx).reshape(nrow, ncol).T.flatten() if i >= 0]
         handles = [handles[i] for i in order]
         labels_leg = [labels_leg[i] for i in order]
 
-        leg = fig.legend(handles, labels_leg, loc='upper left', bbox_to_anchor=(0.11, 0.93),
-                         bbox_transform=fig.transFigure, ncol=ncol, fontsize=LEG_FONT_SIZE,
-                         framealpha=0.9)
+        leg = fig.legend(handles, labels_leg, loc='upper left', bbox_to_anchor=(0.11, 0.96), columnspacing=0.9,
+                         bbox_transform=fig.transFigure, ncol=ncol, fontsize=LEG_FONT_SIZE, framealpha=0.9)
         for line in leg.get_lines():
             line.set_linewidth(2.2)
 
-        fig.subplots_adjust(left=0.12, right=0.97, top=0.87, bottom=0.14, hspace=0.15)
+        fig.subplots_adjust(left=0.12, right=0.97, top=0.87, bottom=0.1, hspace=0.15)
+        _widen_yticks(fig)
         fig.align_ylabels()
         if output_path:
-            os.makedirs(output_path, exist_ok=True)
-            fig.savefig(os.path.join(output_path, 'tank_trajectories.png'), dpi=300)
+            validate_output(output_path)
+            fig.savefig(output_path, dpi=300)
         return fig, tank_axes, tariff_ax
 
     def plot_cumulative_metrics(self, methods=None):
