@@ -2,7 +2,7 @@ data:
   # data files need to have a datetime index column with time zone aware format
   network_path: "data/price_ostfeld"
   demands_path: "data/price_ostfeld/demands.csv"
-  tariffs_path: "data/price_ostfeld/tariffs.csv"
+  tariffs_path: "data/price_ostfeld/tariffs-hu.csv"
 
 columns:
   prices_col: "tariff"  # correspond to Volume Weighted Average Price column from the raw dataset
@@ -17,8 +17,11 @@ training:
     end: "2022-12-31"
 
 forecast:
-  model: "rf"
+  model: "xgb"
   holiday_country: "HU"
+  n_estimators: 100
+  max_depth: 5
+  learning_rate: 0.05
 
 experiment:
   type: "mpc_sweep"
@@ -72,7 +75,7 @@ experiment:
   options:
     milp: true
     plot: false
-    output_dir: "outputs/01_jan2023_rf"
+    output_dir: "outputs/01_jan2023_hu"
     export_inp: true
     final_vol_constraint: false
 

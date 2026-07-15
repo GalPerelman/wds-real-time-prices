@@ -1,0 +1,80 @@
+data:
+  # data files need to have a datetime index column with time zone aware format
+  network_path: "data/two_mains"
+  demands_path: "data/two_mains/demands.csv"
+  tariffs_path: "data/two_mains/tariffs-hu.csv"
+
+columns:
+  prices_col: "tariff"  # correspond to Volume Weighted Average Price column from the raw dataset
+  demand_cols: ["a", "b", "c", "d", "e", "f"]
+
+training:
+  forecast:
+    start: "2021-01-01"
+    end: "2022-12-31"
+  uncertainty:
+    start: "2022-10-01"
+    end: "2022-12-31"
+
+forecast:
+  model: "xgb"
+  holiday_country: "HU"
+  n_estimators: 100
+  max_depth: 5
+  learning_rate: 0.05
+
+experiment:
+  type: "mpc_sweep"
+
+  experiment_period:
+    start: "2023-01-01 00:00"
+    horizon: 168 # 31 days
+
+  mpc:
+    step_horizon: 24  # lookahead window (hours)
+    wait: 1           # hours between re-optimizations (implemented steps)
+
+  methods:
+    - group: "LP"
+      opt_method: "lp"
+      n_binary_steps: [4, 8, 12, 16, 20, 24]
+
+    - group: "RO-Ellipsoid"
+      opt_method: "ro"
+      params:
+        uncertainty_set: "ellipsoid"
+      sweep:
+        omega: [2.5]
+        n_binary_steps: [4, 8, 12, 16, 20, 24]
+
+    - group: "RO-BOU"
+      opt_method: "ro"
+      params:
+        uncertainty_set: "bou"
+      sweep:
+        gamma: [[ 8, 14 ]]
+        n_binary_steps: [4, 8, 12, 16, 20, 24]
+
+    - group: "CC-SP"
+      opt_method: "sp"
+      sweep:
+        alpha: [[0.90, 0.9], [0.95, 0.95]]
+        lambda_cvar: [0, 1]
+        n_binary_steps: [4, 8, 12, 16, 20, 24]
+
+  options:
+    milp: true
+    plot: false
+    output_dir: "outputs/02_jan2023_hu_sa_nbinary"
+    export_inp: true
+    final_vol_constraint: false
+
+    simulator:
+      inp_file: "data/two_mains/two_mains.inp"
+
+    n_workers: 4
+
+    solver_params:
+      solver_display: false
+      TimeLimit: 300
+      Threads: 2
