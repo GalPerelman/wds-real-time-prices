@@ -12,26 +12,104 @@ from matplotlib.gridspec import GridSpec
 from matplotlib.lines import Line2D
 from epyt import epanet as _epanet
 
-# Global palette for optimization methods.
-# 'color'  - representative fixed color for single-point/static plots
-# 'cmap'   - colormap for multi-parameter sweep shading
-# 'marker' - shared marker style
-# Per-group styles for all MPC plots. Keys match the 'group' field in experiment configs.
-# 'color'  - single representative color used in plot_por
-# 'cmap'   - colormap used in plot_tank_trajectories to shade individual sweep variants
+from network import LPNetwork
+
+# Canonical per-family styles for all MPC plots. Keys are the 6 groups derive_group()
+# can return -- NOT one entry per sweep value. Freely customize 'color'/'cmap'/'marker'
+# per family; new sweep values (a new omega, gamma, alpha, or lambda_cvar) never need a
+# new entry here, since grouping and within-group shading are computed dynamically from
+# the label's own numeric sweep parameter(s) (see derive_group, build_label_colors).
+# 'color'  - single representative color, used when a group has exactly one label
+# 'cmap'   - named matplotlib colormap used to shade multiple labels within a group
 # 'marker' - marker style used in plot_por
-# All three fields are required for every entry (no fallback).
 GROUP_STYLES = {
-    'LP':            {'color': 'k',        'cmap': 'Greys',    'marker': 'X'},
-    'RO-Ellipsoid':  {'color': 'C0',  'cmap': 'Blues',    'marker': 'o'},
-    'RO-BOU':     {'color': '#368399',  'cmap': 'Greens',  'marker': 'D'},
-    'RO-BOU-1':     {'color': '#368399',  'cmap': 'Greens',  'marker': 'D'},
-    'RO-BOU-2':     {'color': '#8670FF',  'cmap': 'Purples',  'marker': 'D'},
-    'CC-SP':         {'color': '#d13b2c',  'cmap': 'Reds',     'marker': 's'},
-    'CC-SP-relaxed': {'color': 'C1',  'cmap': 'Oranges',  'marker': '^'},
+    'PTO':           {'color': 'k',        'cmap': 'Greys',   'marker': 'X'},
+    'RO-Ellipsoid':  {'color': 'C0',       'cmap': 'Blues',   'marker': 'o'},
+    'RO-BOU':        {'color': '#39A774',  'cmap': 'Greens',  'marker': '^'},
+    'CCO':           {'color': '#d13b2c',  'cmap': 'Reds',    'marker': 's'},
+    'CCO-relaxed':   {'color': '#d13b2c',  'cmap': 'Reds',    'marker': 'D'},
+    'CCO-CVaR':      {'color': '#FFA21F',  'cmap': 'Oranges', 'marker': 's'},
 }
 
 LEG_FONT_SIZE = 9
+_PARAM_SORT_PRIORITY = ['lambda_cvar', 'alpha', 'gamma', 'omega']
+_FILTER_COMPONENT_ALIASES = {'gamma_cost': ('gamma', 0), 'gamma_constraints': ('gamma', 1)}
+
+
+
+def _label_param_value(label, param):
+    """Value of one sweep parameter (or one component of it, via _FILTER_COMPONENT_ALIASES)
+    parsed straight from the label string -- robust to summary being loaded from a saved
+    summary.csv, where a list-valued column like 'gamma' would come back as a literal
+    string ('[8, 14]') rather than an actual list. Returns None if the label doesn't carry
+    this parameter (e.g. 'lambda_cvar' on an RO label).
+    """
+    key, idx = _FILTER_COMPONENT_ALIASES.get(param, (param, 0))
+    values = _parse_label_params(label).get(key, ())
+    return values[idx] if idx < len(values) else None
+
+
+def _parse_label_params(label):
+    """
+    Parse a 'PREFIX_var1=val1|var2=val2' sweep label into {var: (numbers...)}.
+    e.g. 'SP_alpha=[0.95, 0.95]|lambda_cvar=1' -> {'alpha': (0.95, 0.95), 'lambda_cvar': (1.0,)}
+    """
+    try:
+        _, rest = label.split('_', 1)
+    except ValueError:
+        return {}
+    params = {}
+    for segment in rest.split('|'):
+        if '=' not in segment:
+            continue
+        var, val = segment.split('=', 1)
+        params[var] = tuple(float(n) for n in re.findall(r'-?\d+\.?\d*', val))
+    return params
+
+
+def _label_sort_value(label):
+    """
+    Ordered tuple of numeric sweep parameter(s) for a label, using
+    _PARAM_SORT_PRIORITY (lambda_cvar before alpha, etc.), then any remaining
+    params in the order they appear in the label. Empty tuple for parameter-free
+    labels (e.g. 'LP'). Shared by _sort_methods_by_group (x-axis order) and
+    build_label_colors (shading) so the two can never disagree.
+    """
+    params = _parse_label_params(label)
+    ordered_keys = [k for k in _PARAM_SORT_PRIORITY if k in params] + \
+                   [k for k in params if k not in _PARAM_SORT_PRIORITY]
+    return tuple(v for k in ordered_keys for v in params[k])
+
+
+def derive_group(label):
+    """
+    Canonical style-group for a label -- one of GROUP_STYLES' 6 keys -- derived
+    purely from the label's own structure: 'LP', 'RO_omega=..', 'RO_gamma=[..]',
+    'SP_alpha=[a, b]', or 'SP_alpha=[a, b]|lambda_cvar=..' (the fixed contract
+    produced by config.expand_methods()). Independent of any config-side 'group'
+    field or per-run renaming: a new sweep value never needs a new group entry,
+    and grouping can't drift out of sync with the actual data.
+    """
+    if label == 'LP':
+        return 'PTO'
+
+    params = _parse_label_params(label)
+    if label.startswith('RO_'):
+        if 'omega' in params:
+            return 'RO-Ellipsoid'
+        if 'gamma' in params:
+            return 'RO-BOU'
+        raise ValueError(f"RO label without omega or gamma: {label}")
+
+    if label.startswith('SP_'):
+        lam = params.get('lambda_cvar', (0.0,))[0]
+        if lam > 0:
+            return 'CCO-CVaR'
+        alpha = params.get('alpha', ())
+        relaxed = len(alpha) == 2 and alpha[0] != alpha[1]
+        return 'CCO-relaxed' if relaxed else 'CCO'
+
+    raise ValueError(f"Unrecognized label structure: {label}")
 
 
 def to_latex_label(s):
@@ -42,13 +120,20 @@ def to_latex_label(s):
             return "PTO"
         return s  # no underscore, return as-is
 
+    drop_lambda = False
     if prefix == 'SP':
-        prefix = 'CCOPT'
+        # Mirror derive_group's lam > 0 check so the legend text never disagrees with the
+        # canonical group used for color/style -- a lambda_cvar=0 (or absent) run is CCO,
+        # not CCO-CVaR, and shouldn't show a '$\\lambda=0$' term at all.
+        prefix = 'CCO-CVaR' if derive_group(s) == 'CCO-CVaR' else 'CCO'
+        drop_lambda = prefix != 'CCO-CVaR'
 
     # multi-param sweeps join "var=val" segments with '|' (see config.expand_methods)
     parts = []
     for segment in rest.split('|'):
         var, val = segment.split('=')  # "omega", "1"
+        if drop_lambda and var == 'lambda_cvar':
+            continue
         try:
             a, b = val.strip('[').strip(']').split(',')
             if a == b.strip(' '):
@@ -68,7 +153,7 @@ def to_latex_label(s):
 
         parts.append(f"{var}={val}")
 
-    return rf"${prefix}_{{{', '.join(parts)}}}$"
+    return rf"{prefix}$_{{{', '.join(parts)}}}$"
 
 
 def build_label_colors(label_to_group):
@@ -76,11 +161,8 @@ def build_label_colors(label_to_group):
     Assign one color per label using GROUP_STYLES.
 
     label_to_group: ordered dict {label_str: group_str}
-        e.g. {'RO_omega=0.5': 'RO-Ellipsoid', 'RO_omega=1.0': 'RO-Ellipsoid',
-              'SP_alpha=0.9': 'CC-SP'}
-
-    Within each group, multiple labels get shaded across the group's cmap [0.45, 0.85].
-    A single label in a group gets the group's fixed 'color'.
+    e.g. {'RO_omega=0.5': 'RO-Ellipsoid', 'RO_omega=1.0': 'RO-Ellipsoid', 'SP_alpha=[0.9, 0.9]': 'CC-SP'}
+    group_str must be one of GROUP_STYLES' canonical keys (see derive_group).
 
     Returns {label: rgba_color}.
     """
@@ -91,16 +173,34 @@ def build_label_colors(label_to_group):
         style = GROUP_STYLES[group]
         if len(labels_in_group) == 1:
             colors[labels_in_group[0]] = mcolors.to_rgba(style['color'])
+            continue
+
+        cmap = mpl.colormaps[style['cmap']]
+        keyed = [(label, _label_sort_value(label)) for label in labels_in_group]
+        n_dims = max((len(k) for _, k in keyed), default=0)
+        keyed = [(label, k if k else (0.0,) * max(n_dims, 1)) for label, k in keyed]
+        outer_values = sorted({k[0] for _, k in keyed})
+
+        if n_dims <= 1 or len(outer_values) == 1:
+            keyed.sort(key=lambda lk: lk[1])
+            shades = np.linspace(0.35, 0.9, len(keyed))
+            for (label, _), shade in zip(keyed, shades):
+                colors[label] = cmap(shade)
         else:
-            cmap_val = style['cmap']
-            if isinstance(cmap_val, list):
-                for i, label in enumerate(labels_in_group):
-                    colors[label] = mcolors.to_rgba(cmap_val[i % len(cmap_val)])
-            else:
-                cmap = mpl.colormaps[cmap_val]
-                shades = np.linspace(0.45, 0.85, len(labels_in_group))
-                for i, label in enumerate(labels_in_group):
-                    colors[label] = cmap(shades[i])
+            anchors = np.linspace(0.3, 0.9, len(outer_values))
+            spacing = anchors[1] - anchors[0] if len(anchors) > 1 else 0.6
+            half_band = min(0.12, spacing * 0.4)
+            for outer_val, anchor in zip(outer_values, anchors):
+                bucket = sorted([(label, k) for label, k in keyed if k[0] == outer_val],
+                                 key=lambda lk: lk[1])
+                if len(bucket) == 1:
+                    shades = [anchor]
+                else:
+                    band_low = max(anchor - half_band, 0.05)
+                    band_high = min(anchor + half_band, 0.95)
+                    shades = np.linspace(band_low, band_high, len(bucket))
+                for (label, _), shade in zip(bucket, shades):
+                    colors[label] = cmap(shade)
     return colors
 
 
@@ -309,6 +409,7 @@ def plot_mpc_forecast_accuracy(trajectories, method=None, figsize=None):
 class MPCGraphs:
     def __init__(self, trajectories, net, inp_file=None):
         self.trajectories = trajectories
+        self.trajectories['group'] = self.trajectories['label'].apply(derive_group)
         self.net = net
         self._epanet_bounds = None
         self._tank_areas = None
@@ -721,6 +822,14 @@ class MPCGraphs:
         All groups present in the summary must be defined in GROUP_STYLES.
         """
         summary = summary.copy()
+
+        for param, values in (filters or {}).items():
+            def _keep(l, param=param, values=values):
+                v = _label_param_value(l, param)
+                return v is None or v in values
+            summary = summary[summary['label'].apply(_keep)]
+
+        summary['group'] = summary['label'].apply(derive_group)
         if 'violated_vol' not in summary.columns and \
                 'min_violated_vol' in summary.columns and 'max_violated_vol' in summary.columns:
             summary['violated_vol'] = summary['min_violated_vol'] + summary['max_violated_vol']
