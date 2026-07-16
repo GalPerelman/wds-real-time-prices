@@ -248,11 +248,12 @@ class OptGraphs:
         else:
             j = 0
 
-        if ncols is None:
-            ncols = max(1, int(math.ceil(math.sqrt(self.opt_model.network.n_tanks))))
-            nrows = max(1, int(math.ceil(self.opt_model.network.n_tanks / ncols))) + j
+        n_tanks = self.opt_model.network.n_tanks
+        if ncols is None and n_tanks > 4:
+            ncols = max(1, int(math.ceil(math.sqrt(n_tanks))))
+            nrows = max(1, int(math.ceil(n_tanks / ncols))) + j
         else:
-            nrows = self.opt_model.network.n_tanks + j
+            nrows = n_tanks + j
 
         fig, axes = plt.subplots(nrows=nrows, ncols=ncols, figsize=(7, 7))
         axes = axes.ravel()
