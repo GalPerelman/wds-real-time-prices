@@ -204,6 +204,59 @@ def build_label_colors(label_to_group):
     return colors
 
 
+def transpose_legend(handles, labels, ncol):
+    """
+    Reorder a flat (handles, labels) list -- e.g. from ax.get_legend_handles_labels() -- so a
+    multi-column legend fills column-major (top-to-bottom within a column, then the next
+    column) instead of matplotlib's row-major default. Shared by every MPCGraphs figure-level
+    legend that doesn't need custom row groupings (see build_legend_order for that case).
+    """
+    nrow = math.ceil(len(handles) / ncol)
+    idx = list(range(len(handles))) + [-1] * (nrow * ncol - len(handles))
+    order = [i for i in np.array(idx).reshape(nrow, ncol).T.flatten() if i >= 0]
+    return [handles[i] for i in order], [labels[i] for i in order]
+
+
+def build_legend_order(row_label_lists, label_to_handle, ncol=None):
+    """
+    Build (handles, labels, ncol) for a multi-column legend with caller-chosen row groupings
+    (e.g. one row per method family), filled column-major so each inner list of
+    row_label_lists reads as one legend row. Short rows are padded with a blank spacer entry
+    to match the widest row. Shared by plot_cumulative_metrics/plot_energy_price_quantile's
+    `legend_rows` parameter.
+
+    row_label_lists: list of lists of labels, one inner list per intended legend row.
+    label_to_handle: {label: handle} lookup; to_latex_label(label) is used as display text.
+    ncol: number of columns; defaults to the widest row.
+    """
+    if ncol is None:
+        ncol = max(len(r) for r in row_label_lists)
+
+    spacer = Line2D([0], [0], color='none')
+    rows = []
+    for lbls in row_label_lists:
+        row_h, row_l = [], []
+        for lbl in lbls:
+            try:
+                display = to_latex_label(lbl)
+            except (ValueError, AttributeError):
+                display = lbl
+            row_h.append(label_to_handle[lbl])
+            row_l.append(display)
+        for _ in range(ncol - len(lbls)):
+            row_h.append(spacer)
+            row_l.append('')
+        rows.append((row_h, row_l))
+
+    n_rows = len(rows)
+    handles_leg, labels_leg = [], []
+    for col in range(ncol):
+        for row in range(n_rows):
+            handles_leg.append(rows[row][0][col])
+            labels_leg.append(rows[row][1][col])
+    return handles_leg, labels_leg, ncol
+
+
 class OptGraphs:
     def __init__(self, opt_model):
         self.opt_model = opt_model
@@ -707,11 +760,7 @@ class MPCGraphs:
         labels_leg += ['EPANET Max']
 
         ncol = min(math.ceil(len(handles)/2), 4)
-        nrow = math.ceil(len(handles) / ncol)
-        idx = list(range(len(handles))) + [-1] * (nrow * ncol - len(handles))
-        order = [i for i in np.array(idx).reshape(nrow, ncol).T.flatten() if i >= 0]
-        handles = [handles[i] for i in order]
-        labels_leg = [labels_leg[i] for i in order]
+        handles, labels_leg = transpose_legend(handles, labels_leg, ncol)
 
         leg = fig.legend(handles, labels_leg, loc='upper left', bbox_to_anchor=(0.11, 0.96), columnspacing=0.9,
                          bbox_transform=fig.transFigure, ncol=ncol, fontsize=LEG_FONT_SIZE, framealpha=0.9)
@@ -808,14 +857,10 @@ class MPCGraphs:
 
         handles, labels_leg = ax_cost.get_legend_handles_labels()
         ncol = min(len(handles), 5)
-        nrow = math.ceil(len(handles) / ncol)
-        idx = list(range(len(handles))) + [-1] * (nrow * ncol - len(handles))
-        order = [i for i in np.array(idx).reshape(nrow, ncol).T.flatten() if i >= 0]
-        handles = [handles[i] for i in order]
-        labels_leg = [labels_leg[i] for i in order]
+        handles, labels_leg = transpose_legend(handles, labels_leg, ncol)
 
-        leg = fig.legend(handles, labels_leg, loc='upper left', bbox_to_anchor=(0.095, 0.96),
-                         bbox_transform=fig.transFigure, ncol=ncol, fontsize=9, framealpha=0.9)
+        leg = fig.legend(handles, labels_leg, loc='upper left', bbox_to_anchor=(0.14, 0.98),
+                         bbox_transform=fig.transFigure, ncol=ncol, fontsize=LEG_FONT_SIZE, framealpha=0.9)
         for line in leg.get_lines():
             line.set_linewidth(2.2)
 
@@ -1019,15 +1064,11 @@ class MPCGraphs:
         plt.setp(ax_energy.get_xticklabels(), visible=False)
 
         handles, labels_leg = ax_energy.get_legend_handles_labels()
-        ncol = min(len(handles), 5)
-        nrow = math.ceil(len(handles) / ncol)
-        idx = list(range(len(handles))) + [-1] * (nrow * ncol - len(handles))
-        order = [i for i in np.array(idx).reshape(nrow, ncol).T.flatten() if i >= 0]
-        handles = [handles[i] for i in order]
-        labels_leg = [labels_leg[i] for i in order]
+        ncol = min(math.ceil(len(handles)/2), 4)
+        handles, labels_leg = transpose_legend(handles, labels_leg, ncol)
 
         leg = fig.legend(handles, labels_leg, loc='upper left', bbox_to_anchor=(0.095, 0.96),
-                         bbox_transform=fig.transFigure, ncol=ncol, fontsize=9, framealpha=0.9)
+                         bbox_transform=fig.transFigure, ncol=ncol, fontsize=LEG_FONT_SIZE, framealpha=0.9)
         for line in leg.get_lines():
             line.set_linewidth(2.2)
 
@@ -1138,12 +1179,9 @@ class MPCGraphs:
         ax_tariff.legend(loc='upper left', fontsize=LEG_FONT_SIZE, framealpha=0.9, ncol=2)
 
         handles = [Line2D([0], [0], color=label_colors[lbl], linewidth=3.5, label=to_latex_label(lbl)) for lbl in methods]
-        ncol = min(len(handles), 5)
-        nrow = math.ceil(len(handles) / ncol)
-        idx = list(range(len(handles))) + [-1] * (nrow * ncol - len(handles))
-        order = [i for i in np.array(idx).reshape(nrow, ncol).T.flatten() if i >= 0]
-        handles = [handles[i] for i in order]
         labels_leg = [h.get_label() for h in handles]
+        ncol = min(len(handles), 5)
+        handles, labels_leg = transpose_legend(handles, labels_leg, ncol)
 
         leg = fig.legend(handles, labels_leg, loc='upper left', bbox_to_anchor=(0.095, 0.96),
                          bbox_transform=fig.transFigure, ncol=ncol, fontsize=LEG_FONT_SIZE, framealpha=0.9)
@@ -1197,7 +1235,7 @@ class MPCGraphs:
 
         lines1, labels1 = ax1.get_legend_handles_labels()
         lines2, labels2 = ax2.get_legend_handles_labels()
-        ax1.legend(lines1 + lines2, labels1 + labels2, fontsize=8)
+        ax1.legend(lines1 + lines2, labels1 + labels2, fontsize=LEG_FONT_SIZE)
 
         fig.subplots_adjust(left=0.1, right=0.9, top=0.95, bottom=0.12)
         return fig, ax1, ax2
