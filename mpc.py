@@ -95,6 +95,11 @@ class MPC:
         self.opt_model = model
 
     def prepare_forecaster(self):
+        if self.forecast_method == "oracle":
+            # Perfect-foresight baseline: no model to fit, predict_next_horizon() reads
+            # ground-truth realizations directly instead of calling self.forecaster.
+            return None
+
         f = forecast.Forecast(
             training_data=self.db.forecast_training_data,
             prices_col=self.prices_col,
@@ -117,6 +122,10 @@ class MPC:
 
     def predict_next_horizon(self):
         next_horizon_x = self.preprocess_next_horizon()
+        if self.forecast_method == "oracle":
+            # Perfect foresight: use the actual realized values as the "forecast".
+            self.last_forecast = self.realizations.loc[next_horizon_x.index, [self.prices_col] + self.demand_cols]
+            return
         demand_forecast = self.forecaster.predict(x=next_horizon_x, target="demand")
         price_forecast = self.forecaster.predict(x=next_horizon_x, target="price")
         self.last_forecast = pd.DataFrame(index=next_horizon_x.index, data=np.hstack([price_forecast, demand_forecast]),
