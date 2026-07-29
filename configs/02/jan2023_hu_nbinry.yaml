@@ -37,7 +37,8 @@ experiment:
   methods:
     - group: "LP"
       opt_method: "lp"
-      n_binary_steps: [4, 8, 12, 16, 20, 24]
+      sweep:
+        n_binary_steps: [4, 8, 12, 16, 20, 24]
 
     - group: "RO-Ellipsoid"
       opt_method: "ro"
