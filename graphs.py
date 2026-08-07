@@ -813,11 +813,11 @@ class MPCGraphs:
             fig.savefig(output_path, dpi=300)
         return fig, tank_axes, tariff_ax
 
-    def plot_cumulative_metrics(self, methods=None):
+    def plot_cumulative_metrics(self, methods=None, legend_rows=None, baseline_trajectories=None, output_path=""):
         """
         Three stacked subplots with shared x-axis:
-          - Cumulative actual cost (EUR), one line per method label
-          - Cumulative total violated volume (m3) — sum of min and max violations
+          - Cumulative actual cost (EUR) or if baseline_trajectories is given, cumulative REGRET
+          - Cumulative total violated volume (m3) - sum of min and max violations
           - Realized and predicted tariff reference panel (smaller)
         """
         all_labels = self.trajectories['label'].unique().tolist()
@@ -842,8 +842,15 @@ class MPCGraphs:
                 return df[f'{prefix}_min_violated_vol'].values + df[f'{prefix}_max_violated_vol'].values
             return df[f'{prefix}_violated_vol'].values
 
-        fig = plt.figure(figsize=(8, 6))
-        gs = GridSpec(3, 1, height_ratios=[1, 1, 0.5], hspace=0.15, figure=fig)
+        baseline_cost, baseline_label = None, None
+        if baseline_trajectories is not None:
+            if not has_epanet or 'epanet_cost' not in baseline_trajectories.columns:
+                raise ValueError("baseline_trajectories requires 'epanet_cost' in both trajectories")
+            baseline_label = baseline_trajectories['label'].iloc[0]
+            baseline_cost = baseline_trajectories.sort_values('idx')['epanet_cost'].values
+
+        fig = plt.figure(figsize=(8, 5))
+        gs = GridSpec(3, 1, height_ratios=[2, 2, 1.4], hspace=0.14, figure=fig)
         ax_cost = fig.add_subplot(gs[0])
         ax_vol = fig.add_subplot(gs[1], sharex=ax_cost)
         ax_tariff = fig.add_subplot(gs[2], sharex=ax_cost)
@@ -852,6 +859,11 @@ class MPCGraphs:
             df = self.trajectories[self.trajectories['label'] == label]
             if df.empty:
                 raise ValueError(f"Label '{label}' not found. Available: {all_labels}")
+            if baseline_cost is not None:
+                df = df.sort_values('idx')
+                if len(df) != len(baseline_cost):
+                    raise ValueError(f"Length mismatch between '{label}' ({len(df)}) and baseline "
+                                     f"'{baseline_label}' ({len(baseline_cost)})")
             color = label_colors[label]
             time = pd.to_datetime(df['time'])
 
@@ -862,12 +874,15 @@ class MPCGraphs:
                 total_opt_energy = df[opt_energy_cols].sum(axis=1)
                 cost_per_step = (total_opt_energy * df['realized_tariff'] / 1000).values
 
+            if baseline_cost is not None:
+                cost_per_step = cost_per_step - baseline_cost
+
             try:
                 label = to_latex_label(label)
             except ValueError:
                 pass
-            ax_cost.plot(time, np.cumsum(cost_per_step), color=color, linewidth=1.2, label=label)
-            ax_vol.plot(time, np.cumsum(get_violated_vol(df)), color=color, linewidth=1.2)
+            ax_cost.plot(time, np.cumsum(cost_per_step), color=color, label=label)
+            ax_vol.plot(time, np.cumsum(get_violated_vol(df)), color=color)
 
         ref_df = self.trajectories[self.trajectories['label'] == methods[0]]
         ref_time = pd.to_datetime(ref_df['time'])
@@ -878,21 +893,50 @@ class MPCGraphs:
         ax_tariff.set_ylabel('Tariff\n(€/MWh)')
         ax_tariff.grid(zorder=0)
         ax_tariff.set_axisbelow(True)
-        ax_tariff.xaxis.set_major_formatter(mdates.DateFormatter('%m-%d\n%H:%M'))
-        ax_tariff.xaxis.set_major_locator(mdates.AutoDateLocator())
-        ax_tariff.legend(loc='upper right', fontsize=8, framealpha=0.9)
-        fig.autofmt_xdate(rotation=0, ha='center')
+        _loc = mdates.AutoDateLocator()
+        ax_tariff.xaxis.set_major_locator(_loc)
+        ax_tariff.xaxis.set_major_formatter(mdates.DateFormatter('%d'))
+        ax_tariff.set_xlabel(ref_time.iloc[0].strftime('%B %Y'))
+        ax_tariff.legend(loc='upper left', fontsize=LEG_FONT_SIZE, framealpha=0.9, ncol=2)
 
-        ax_cost.set_ylabel('Cumulative\nCost (€)')
+        if baseline_cost is not None:
+            ax_cost.axhline(0, color='k', linewidth=0.8, alpha=0.6, zorder=0)
+            ax_cost.set_ylabel(f'Cumulative\nRegret (€)')
+        else:
+            ax_cost.set_ylabel('Cumulative Cost (€)')
         ax_cost.grid(zorder=0)
         ax_cost.set_axisbelow(True)
         plt.setp(ax_cost.get_xticklabels(), visible=False)
 
-        ax_vol.set_ylabel('Cumulative\nViolated Vol. ($m^3$)')
+        ax_vol.set_ylabel('Cumulative Violated\nVolume ($m^3$)')
         ax_vol.grid(zorder=0)
         ax_vol.set_axisbelow(True)
         plt.setp(ax_vol.get_xticklabels(), visible=False)
 
+        if legend_rows is not None:
+            row_label_lists = legend_rows
+        else:
+            group_to_labels = {}
+            for lbl, grp in label_to_group.items():
+                group_to_labels.setdefault(grp, []).append(lbl)
+            row_label_lists = list(group_to_labels.values())
+
+        label_to_handle = {lbl: Line2D([0], [0], color=color, linewidth=2.2) for lbl, color in label_colors.items()}
+        handles_leg, labels_leg, ncol = build_legend_order(row_label_lists, label_to_handle)
+
+        leg = fig.legend(handles_leg, labels_leg, loc='upper left', bbox_to_anchor=(0.14, 1),
+                         bbox_transform=fig.transFigure, ncol=ncol, fontsize=LEG_FONT_SIZE, framealpha=0.9,
+                         columnspacing=0.8, handletextpad=0.8)
+        for line in leg.get_lines():
+            line.set_linewidth(2.2)
+
+        _set_min_yticks(fig)
+        fig.align_ylabels()
+        fig.subplots_adjust(left=0.15, right=0.97, top=0.88, bottom=0.1)
+        if output_path:
+            validate_output_dir(output_path)
+            fig.savefig(output_path, dpi=300)
+        return fig, (ax_cost, ax_vol, ax_tariff)
         handles, labels_leg = ax_cost.get_legend_handles_labels()
         ncol = min(len(handles), 5)
         handles, labels_leg = transpose_legend(handles, labels_leg, ncol)
