@@ -36,6 +36,11 @@ _PARAM_SORT_PRIORITY = ['lambda_cvar', 'alpha', 'gamma', 'omega']
 _FILTER_COMPONENT_ALIASES = {'gamma_cost': ('gamma', 0), 'gamma_constraints': ('gamma', 1)}
 
 
+def validate_output_dir(file_path: str) -> None:
+    path = Path(file_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+
+
 
 def _label_param_value(label, param):
     """Value of one sweep parameter (or one component of it, via _FILTER_COMPONENT_ALIASES)
@@ -771,7 +776,7 @@ class MPCGraphs:
         _widen_yticks(fig)
         fig.align_ylabels()
         if output_path:
-            validate_output(output_path)
+            validate_output_dir(output_path)
             fig.savefig(output_path, dpi=300)
         return fig, tank_axes, tariff_ax
 
