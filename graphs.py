@@ -41,6 +41,12 @@ def validate_output_dir(file_path: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
 
 
+def _set_min_yticks(fig, min_n_ticks=5):
+    """set min number of y ticks in a plot - avoid figures with only 1-2 ticks."""
+    for ax in fig.get_axes():
+        if isinstance(ax.yaxis.get_major_locator(), mtick.AutoLocator):
+            ax.yaxis.set_major_locator(mtick.MaxNLocator(nbins='auto', min_n_ticks=min_n_ticks))
+
 
 def _label_param_value(label, param):
     """Value of one sweep parameter (or one component of it, via _FILTER_COMPONENT_ALIASES)
@@ -773,7 +779,7 @@ class MPCGraphs:
             line.set_linewidth(2.2)
 
         fig.subplots_adjust(left=0.12, right=0.97, top=0.87, bottom=0.1, hspace=0.15)
-        _widen_yticks(fig)
+        _set_min_yticks(fig)
         fig.align_ylabels()
         if output_path:
             validate_output_dir(output_path)
