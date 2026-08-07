@@ -642,14 +642,29 @@ class MPCGraphs:
         return fig, ax
 
     def plot_tank_trajectories(self, methods=None, show_opt=False, mark_violations=False, levels=False,
-                               epanet_bounds=True, tank_ids=None, start_time=None, end_time=None, output_path=""):
+                               epanet_bounds=True, tank_ids=None, start_time=None, end_time=None,
+                               tank_height_in=1.2, tariff_height_in=0.85, width_in=8,
+                               legend_row_height_in=0.26, legend_pad_in=0.1, bottom_margin_in=0.6,
+                               hspace=0.15, output_path=""):
         """
         Plot tank volume (or water level) trajectories over the full MPC experiment.
         Args:
             methods:  list of labels to include; None = all labels
-            show_opt: if True and EPANET columns are present, add the
-                      optimizer (LP mass-balance) volumes as dashed lines.
+            show_opt: if True and EPANET cols are present, add the optimizer (LP mass-balance) volumes as dashed lines.
             levels:   if True, convert volumes to water levels (m) using tank diameters from net.tanks['diameter'].
+            mark_violations: add cicrles around points where the volume is outside the tank's min/max bounds.
+            epanet_bounds: show physical tank bounds (on top of the optimizer constraints)
+            tank_ids: allow customized tank selection
+            start_time: start time for the trajectories
+            end_time: end time for the trajectories
+            tank_height_in: target height (inches) of each tank subplot
+            tariff_height_in: target height (inches) of the tariff subplot
+            width_in: figure width (inches)
+            legend_row_height_in: height (inches) budgeted per legend row when sizing the top margin
+            legend_pad_in: fixed padding (inches) added to the top margin on top of the legend rows
+            bottom_margin_in: height (inches) reserved below the tariff panel for its x-axis label/ticks
+            hspace: GridSpec vertical spacing between subplots (fraction of average subplot height)
+            output_path: export path
         """
         all_labels = self.trajectories['label'].unique().tolist()
         if methods is None:
@@ -668,10 +683,22 @@ class MPCGraphs:
 
         has_epanet = f'epanet_vol_tank_{tank_ids[0]}' in self.trajectories.columns
 
+        # Legend row count from entry count (methods + fixed extras), known before any plotting -
+        # used to size the top margin so it scales with actual legend content, not a fixed constant.
+        n_legend_entries = len(methods) + (1 if show_opt and has_epanet else 0) + 2  # + bounds + EPANET max
+        legend_ncol = min(math.ceil(n_legend_entries / 2), 4)
+        n_legend_rows = math.ceil(n_legend_entries / legend_ncol)
+        top_margin_in = legend_pad_in + n_legend_rows * legend_row_height_in
+
         n_rows = n_tanks + 1
-        height_ratios = [2] * n_tanks + [1.3]
-        fig = plt.figure(figsize=(8, 1.7 * (n_tanks + 1)))
-        gs = GridSpec(n_rows, 1, height_ratios=height_ratios, hspace=0.12, figure=fig)
+        height_ratios = [tank_height_in] * n_tanks + [tariff_height_in]
+        axes_height_in = n_tanks * tank_height_in + tariff_height_in
+        fig_height_in = axes_height_in + top_margin_in + bottom_margin_in
+        top = 1 - top_margin_in / fig_height_in
+        bottom = bottom_margin_in / fig_height_in
+
+        fig = plt.figure(figsize=(width_in, fig_height_in))
+        gs = GridSpec(n_rows, 1, height_ratios=height_ratios, hspace=hspace, figure=fig)
         tank_axes = [fig.add_subplot(gs[0])]
         for i in range(1, n_tanks):
             tank_axes.append(fig.add_subplot(gs[i], sharex=tank_axes[0]))
@@ -733,7 +760,7 @@ class MPCGraphs:
                 metric = 'Level'
             else:
                 metric = 'Volume'
-            ax.set_ylabel(f'Tank {tank_id} {metric}\n({ylabel_unit})')
+            ax.set_ylabel(f'Tank {tank_id}\n{metric}\n({ylabel_unit})')
             ax.grid(zorder=0)
             ax.set_axisbelow(True)
 
@@ -756,7 +783,7 @@ class MPCGraphs:
         tariff_ax.xaxis.set_major_locator(_loc)
         tariff_ax.xaxis.set_major_formatter(mdates.DateFormatter('%d'))
         tariff_ax.set_xlabel(ref_time.iloc[0].strftime('%B %Y'))
-        tariff_ax.legend(loc='lower right', fontsize=LEG_FONT_SIZE, framealpha=0.9, ncol=2)
+        tariff_ax.legend(fontsize=LEG_FONT_SIZE, framealpha=0.9, ncol=2)
 
         # Main legend: methods + opt dashed line + bounds — no tariff (handled locally above)
         handles, labels_leg = tank_axes[0].get_legend_handles_labels()
@@ -778,7 +805,7 @@ class MPCGraphs:
         for line in leg.get_lines():
             line.set_linewidth(2.2)
 
-        fig.subplots_adjust(left=0.12, right=0.97, top=0.87, bottom=0.1, hspace=0.15)
+        fig.subplots_adjust(left=0.15, right=0.97, top=top, bottom=bottom, hspace=hspace)
         _set_min_yticks(fig)
         fig.align_ylabels()
         if output_path:
