@@ -1,12 +1,16 @@
-import math
 import os
+import re
+import sys
+import math
+import pandas as pd
 import numpy as np
+import datetime
+from pathlib import Path
 import matplotlib as mpl
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 import matplotlib.colors as mcolors
 import matplotlib.patheffects as PathEffects
-import pandas as pd
 from matplotlib import ticker as mtick
 from matplotlib.gridspec import GridSpec
 from matplotlib.lines import Line2D
@@ -23,15 +27,15 @@ from network import LPNetwork
 # 'cmap'   - named matplotlib colormap used to shade multiple labels within a group
 # 'marker' - marker style used in plot_por
 GROUP_STYLES = {
-    'PTO':           {'color': 'k',        'cmap': 'Greys',   'marker': 'X'},
-    'RO-Ellipsoid':  {'color': 'C0',       'cmap': 'Blues',   'marker': 'o'},
-    'RO-BOU':        {'color': '#39A774',  'cmap': 'Greens',  'marker': '^'},
-    'CCO':           {'color': '#d13b2c',  'cmap': 'Reds',    'marker': 's'},
-    'CCO-relaxed':   {'color': '#d13b2c',  'cmap': 'Reds',    'marker': 'D'},
-    'CCO-CVaR':      {'color': '#FFA21F',  'cmap': 'Oranges', 'marker': 's'},
+    'PTO': {'color': 'k', 'cmap': 'Greys', 'marker': 'X'},
+    'RO-Ellipsoid': {'color': 'C0', 'cmap': 'Blues', 'marker': 'o'},
+    'RO-BOU': {'color': '#39A774', 'cmap': 'Greens', 'marker': '^'},
+    'CCO': {'color': '#d13b2c', 'cmap': 'Reds', 'marker': 's'},
+    'CCO-relaxed': {'color': '#d13b2c', 'cmap': 'Reds', 'marker': 'D'},
+    'CCO-CVaR': {'color': '#FFA21F', 'cmap': 'Wistia', 'marker': 'p'},
 }
 
-LEG_FONT_SIZE = 9
+LEG_FONT_SIZE = 9.2
 _PARAM_SORT_PRIORITY = ['lambda_cvar', 'alpha', 'gamma', 'omega']
 _FILTER_COMPONENT_ALIASES = {'gamma_cost': ('gamma', 0), 'gamma_constraints': ('gamma', 1)}
 
@@ -101,7 +105,7 @@ def derive_group(label):
     field or per-run renaming: a new sweep value never needs a new group entry,
     and grouping can't drift out of sync with the actual data.
     """
-    if label == 'LP':
+    if label == 'LP' or label.startswith('LP_'):
         return 'PTO'
 
     params = _parse_label_params(label)
@@ -194,7 +198,7 @@ def build_label_colors(label_to_group):
 
         if n_dims <= 1 or len(outer_values) == 1:
             keyed.sort(key=lambda lk: lk[1])
-            shades = np.linspace(0.35, 0.9, len(keyed))
+            shades = np.linspace(0.3, 0.85, len(keyed))
             for (label, _), shade in zip(keyed, shades):
                 colors[label] = cmap(shade)
         else:
@@ -202,8 +206,7 @@ def build_label_colors(label_to_group):
             spacing = anchors[1] - anchors[0] if len(anchors) > 1 else 0.6
             half_band = min(0.12, spacing * 0.4)
             for outer_val, anchor in zip(outer_values, anchors):
-                bucket = sorted([(label, k) for label, k in keyed if k[0] == outer_val],
-                                 key=lambda lk: lk[1])
+                bucket = sorted([(label, k) for label, k in keyed if k[0] == outer_val], key=lambda lk: lk[1])
                 if len(bucket) == 1:
                     shades = [anchor]
                 else:
@@ -337,9 +340,9 @@ class OptGraphs:
         if plot_tariff:
             cost_sample = sample[: self.t:, :]
             axes[-1].plot(cost_sample, alpha=0.1, c='C0')
-            axes[-1].plot(self.opt_model.network.tariffs[self.opt_model.network.tariffs.columns[0]].values[:self.t], c='k')
+            cost_true = self.opt_model.network.tariffs[self.opt_model.network.tariffs.columns[0]].values[:self.t]
+            axes[-1].plot(cost_true, c='k')
             axes[-1].grid(zorder=0)
-            # axes[-1].bar(range(self.t), self.opt_model.network.tariffs['tariff'].values[:self.t], edgecolor='k', alpha=0.6)
             axes[-1].set_ylabel('Tariff (€/MWh)')
 
         axes[-1].set_xlabel('Time (Hr)')
@@ -428,7 +431,7 @@ def plot_predicted_vs_realized(panels, figsize=None):
         ax.plot(panel['time'], panel['predicted'], label='Predicted', color='C1')
         ax.set_ylabel(panel['ylabel'])
         if i == 0:
-            ax.legend(loc='upper right')
+            ax.legend(loc='upper right', ncol=2)
         mae = np.mean(np.abs(np.asarray(panel['predicted']) - np.asarray(panel['realized'])))
         ax.text(0.02, 0.82, f'MAE={mae:.2f}', transform=ax.transAxes, horizontalalignment='left')
 
@@ -473,7 +476,7 @@ def plot_mpc_forecast_accuracy(trajectories, method=None, figsize=None):
 
 class MPCGraphs:
     def __init__(self, trajectories, net, inp_file=None):
-        self.trajectories = trajectories
+        self.trajectories = trajectories.copy()
         self.trajectories['group'] = self.trajectories['label'].apply(derive_group)
         self.trajectories['time'] = pd.to_datetime(self.trajectories['time'])
 
@@ -482,6 +485,31 @@ class MPCGraphs:
         self._tank_areas = None
         if inp_file:
             self._epanet_bounds, self._tank_areas = self._load_epanet_bounds(inp_file)
+
+    @staticmethod
+    def _sort_methods_by_group(methods):
+        """
+        Sort labels by method family, and then by sweep parameter(s) within each family.
+        Groups are retrieved dynamically from the label string, independent of the groups defined in the configs
+        Families are ordered by first appearance in methods.
+
+        Multi-param labels (CCO 'alpha=...|lambda_cvar=...') are sorted by _label_sort_value
+        which applies _PARAM_SORT_PRIORITY (lambda_cvar before alpha, consistent with each lambda_cvar value being
+        treated as its own color band in build_label_colors) - the same function used for shading, so sort order
+        and color order can never disagree.
+        """
+
+        def template(label):
+            return re.sub(r'-?\d+\.?\d*', '#', label)
+
+        family_order = {}
+        for label in methods:
+            family_order.setdefault(template(label), len(family_order))
+
+        def sort_key(label):
+            return (family_order[template(label)], _label_sort_value(label))
+
+        return sorted(methods, key=sort_key)
 
     def _load_epanet_bounds(self, inp_file):
         """Return ({tank_id: physical_max_vol_m3}, {tank_id: area_m2}) from EPANET INP."""
@@ -946,20 +974,30 @@ class MPCGraphs:
         for line in leg.get_lines():
             line.set_linewidth(2.2)
 
-        fig.subplots_adjust(left=0.12, right=0.97, top=0.87, bottom=0.08)
-        return fig, (ax_cost, ax_vol, ax_tariff)
+        fig.align_ylabels()
+        fig.subplots_adjust(left=0.15, right=0.97, top=0.86, bottom=0.12)
+        if output_path:
+            os.makedirs(output_path, exist_ok=True)
+            fig.savefig(os.path.join(output_path, 'cost_trajectory.png'), dpi=300)
+        return fig, (ax_cost, ax_tariff)
 
-    def plot_por(self, summary, violations_metric="violated_vol"):
+    def plot_por(self, summary, violations_metric="violated_vol", filters=None, output_path=""):
         """
-        Plot cost vs. violations (POR curve) for all method groups.
+        Plot cost vs. violations (POR curve) for all method labels.
 
-        summary:           DataFrame with 'group', 'actual_cost', and the
-                           violations_metric column.
+        summary:           DataFrame with 'label', 'actual_cost', and the
+                           violations_metric column. 'group' is (re)computed from
+                           'label' via derive_group, ignoring any 'group' column
+                           already present.
         violations_metric: column name from summary — 'min_violated_vol', 'max_violated_vol',
                            'violated_vol', or 'constraint_satisfaction_rate'
+        filters:           optional {param: [allowed_values, ...]}, matched against values parsed from the 'label'
+                           string (see _label_param_value).
+                           Use 'gamma_cost'/'gamma_constraints' to filter on one component of the
+                           (gamma_obj, gamma_constraints) pair.
 
-        Colors and markers are taken from GROUP_STYLES keyed by group name.
-        All groups present in the summary must be defined in GROUP_STYLES.
+        Colors/markers come from GROUP_STYLES keyed by the canonical group name (see derive_group)
+        one point-style per group, not per label.
         """
         summary = summary.copy()
 
@@ -967,6 +1005,7 @@ class MPCGraphs:
             def _keep(l, param=param, values=values):
                 v = _label_param_value(l, param)
                 return v is None or v in values
+
             summary = summary[summary['label'].apply(_keep)]
 
         summary['group'] = summary['label'].apply(derive_group)
@@ -974,29 +1013,44 @@ class MPCGraphs:
                 'min_violated_vol' in summary.columns and 'max_violated_vol' in summary.columns:
             summary['violated_vol'] = summary['min_violated_vol'] + summary['max_violated_vol']
 
+        label_to_group = dict(zip(summary['label'], summary['group']))
+        colors = build_label_colors(label_to_group)
+
+        sorted_labels = MPCGraphs._sort_methods_by_group(list(summary['label']))
+        summary = summary.set_index('label').loc[sorted_labels].reset_index()
+
         fig, ax = plt.subplots(figsize=(6, 5))
 
-        for group, grp_df in summary.groupby('group', sort=False):
-            style = GROUP_STYLES[group]
-            ax.scatter(grp_df['actual_cost'], grp_df[violations_metric],
-                    color=style['color'], marker=style['marker'], s=40,
-                    label=group, edgecolor='k')
+        for _, row in summary.iterrows():
+            style = GROUP_STYLES[row['group']]
+            ax.scatter(row['actual_cost'], row[violations_metric], color=colors[row['label']],
+                       marker=style['marker'], s=60, edgecolor='k', label=to_latex_label(row['label']))
 
         ylabels = {
-            "violated_vol":                 "Violated Volume ($m^3$)",
-            "min_violated_vol":             "Service Disruption ($m^3$)",
-            "max_violated_vol":             "Overflow Volume ($m^3$)",
+            "violated_vol": "Violated Volume ($m^3$)",
+            "min_violated_vol": "Service Disruption ($m^3$)",
+            "max_violated_vol": "Overflow Volume ($m^3$)",
             "constraint_satisfaction_rate": "Constraint Satisfaction Rate",
         }
         ax.set_xlabel('Actual Cost (€)')
         ax.set_ylabel(ylabels.get(violations_metric, violations_metric))
-        ax.legend()
+        if violations_metric == "constraint_satisfaction_rate":
+            ax.yaxis.set_major_formatter(mtick.PercentFormatter(xmax=1.0))
+
+        ax.legend(ncol=2, fontsize=9)
+        ax.grid()
+        ax.set_axisbelow(True)
+        fig.subplots_adjust(left=0.14, right=0.95, top=0.95, bottom=0.1)
+        if output_path:
+            validate_output_dir(output_path)
+            fig.savefig(output_path, dpi=300)
+        return fig, ax
         ax.grid()
         ax.set_axisbelow(True)
         fig.subplots_adjust(left=0.12, right=0.95, top=0.95, bottom=0.1)
         return fig, ax
 
-    def plot_price_responsiveness(self, methods=None, bin_width=25):
+    def plot_price_responsiveness(self, methods=None, bin_width=25, output_path=""):
         """
         Grouped boxplot of total EPANET energy vs realized tariff bins.
 
@@ -1066,7 +1120,7 @@ class MPCGraphs:
                     patch.set_alpha(0.7)
             legend_handles.append(
                 plt.Rectangle((0, 0), 1, 1, facecolor=color, alpha=0.7,
-                               edgecolor='k', linewidth=0.8, label=label)
+                              edgecolor='k', linewidth=0.8, label=to_latex_label(label))
             )
 
         ax.set_xticks(range(n_bins))
@@ -1077,21 +1131,16 @@ class MPCGraphs:
         ax.grid(axis='y')
         ax.set_axisbelow(True)
         fig.subplots_adjust(left=0.1, right=0.95, top=0.95, bottom=0.18)
+        if output_path:
+            os.makedirs(output_path, exist_ok=True)
+            fig.savefig(os.path.join(output_path, 'price_responsiveness.png'), dpi=300)
         return fig, ax
 
-    def plot_cumulative_energy_by_price(self, methods=None):
+    def plot_cumulative_energy_by_price(self, methods=None, output_path=""):
         """
         Cumulative energy duration curve: one line per method label, all on one axes.
-
-        Hours are sorted from cheapest to most expensive by realized tariff (same
-        ordering for all methods — same experiment period, same prices).
+        Hours are sorted from cheapest to most expensive by realized tariff.
         The y-axis shows cumulative total pump energy consumed up to each price rank.
-
-        A price-aggressive schedule (LP) rises steeply at the left (most energy in
-        cheapest hours), then flattens. A risk-averse schedule (RO) rises more linearly.
-
-        A smaller subplot below shows the sorted realized tariff for price context.
-
         Args:
             methods:  list of labels to include; None = all labels
         """
@@ -1146,7 +1195,7 @@ class MPCGraphs:
         plt.setp(ax_energy.get_xticklabels(), visible=False)
 
         handles, labels_leg = ax_energy.get_legend_handles_labels()
-        ncol = min(math.ceil(len(handles)/2), 4)
+        ncol = min(math.ceil(len(handles) / 2), 4)
         handles, labels_leg = transpose_legend(handles, labels_leg, ncol)
 
         leg = fig.legend(handles, labels_leg, loc='upper left', bbox_to_anchor=(0.095, 0.96),
@@ -1155,6 +1204,9 @@ class MPCGraphs:
             line.set_linewidth(2.2)
 
         fig.subplots_adjust(left=0.1, right=0.97, top=0.87, bottom=0.1)
+        if output_path:
+            validate_output_dir(output_path)
+            fig.savefig(output_path, dpi=300)
         return fig, (ax_energy, ax_tariff)
 
     def plot_pump_gantt(self, methods=None, output_path=""):
@@ -1260,7 +1312,8 @@ class MPCGraphs:
         ax_tariff.set_xlabel(ref_time.iloc[0].strftime('%B %Y'))
         ax_tariff.legend(loc='upper left', fontsize=LEG_FONT_SIZE, framealpha=0.9, ncol=2)
 
-        handles = [Line2D([0], [0], color=label_colors[lbl], linewidth=3.5, label=to_latex_label(lbl)) for lbl in methods]
+        handles = [Line2D([0], [0], color=label_colors[lbl], linewidth=3.5, label=to_latex_label(lbl))
+                   for lbl in methods]
         labels_leg = [h.get_label() for h in handles]
         ncol = min(len(handles), 5)
         handles, labels_leg = transpose_legend(handles, labels_leg, ncol)
