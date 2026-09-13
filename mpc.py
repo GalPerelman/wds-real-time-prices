@@ -107,7 +107,7 @@ class MPC:
             holiday_country=self.holiday_country,
             buffer=self.buffer
         )
-        f.preprocess()
+        f.preprocess(n_weeks=self.forecast_params.get('n_weeks', 0))
 
         f.fit(model_name=self.forecast_method, target="demand", **self.forecast_params)
         f.fit(model_name=self.forecast_method, target="price", **self.forecast_params)
@@ -118,6 +118,9 @@ class MPC:
         next_horizon = pd.DataFrame(index=pd.date_range(start=self.current_time, end=next_horizon_end, freq="h"))
         next_horizon_data = forecast.Forecast.construct_datetime_features(next_horizon,
                                                                           holiday_country=self.holiday_country)
+        if self.forecaster is not None and self.forecaster.n_weeks:
+            lag_data = self.forecaster.get_week_lag_values(next_horizon_data.index, self.forecaster.n_weeks)
+            next_horizon_data = pd.concat([next_horizon_data, lag_data], axis=1)
         return next_horizon_data
 
     def predict_next_horizon(self):

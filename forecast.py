@@ -177,11 +177,23 @@ class Forecast:
 
         self.price_model = None
         self.demand_model = None
+        self.n_weeks = 0
 
-    def preprocess(self):
+    def preprocess(self, n_weeks=0):
+        """
+        Args:
+            n_weeks: number of week-multiple (168h, 336h, ...) lag columns to add per target col (xgb/rf).
+                Same parameter/value as NaiveModel's n_weeks. For 'naive' it's consumed directly as the averaging
+                window in fit() and this preprocessing step has no effect on its predictions.
+        """
+        self.n_weeks = n_weeks
         self.data_completion()
         self.data = self.construct_datetime_features(self.data, holiday_country=self.holiday_country)
-        # self.lag_features(cols_to_lag={**{col: 6 for col in self.demand_cols}, **{self.prices_col: 5}})
+        if self.n_weeks:
+            self.lag_features(cols_to_lag={
+                col: [168 * week for week in range(1, self.n_weeks + 1)]
+                for col in [self.prices_col] + self.demand_cols
+            })
         self.data = self.data.dropna()
 
     def data_completion(self):
@@ -235,13 +247,32 @@ class Forecast:
         return data
 
     def lag_features(self, cols_to_lag: dict):
+        """
+        Add lag columns to self.data (row-shift based - assumes a gapless hourly index).
+        cols_to_lag: {column: [lag_hours, ...]}. Each lag column is named '{column}_lag{lag}h'.
+        """
         lagged_cols = []
         for label, lags in cols_to_lag.items():
-            for lag in range(1, lags + 1):
-                self.data[label + f'_{lag}'] = self.data[label].shift(lag)
-                lagged_cols.append(label + f'_{lag}')
+            for lag in lags:
+                col_name = f'{label}_lag{lag}h'
+                self.data[col_name] = self.data[label].shift(lag)
+                lagged_cols.append(col_name)
 
         return lagged_cols
+
+    def get_week_lag_values(self, index, n_weeks):
+        """
+        Vectorized week-multiple (168h, 336h, ...) lag lookup from self.buffer for a batch of
+        target times, matching the column naming used by lag_features()/preprocess().
+        Any 168h-multiple lag is guaranteed to be in the buffer regardless of what hour of day it was last updated
+        """
+        cols = [self.prices_col] + self.demand_cols
+        lag_data = {}
+        for col in cols:
+            for week in range(1, n_weeks + 1):
+                lag = 168 * week
+                lag_data[f'{col}_lag{lag}h'] = self.buffer.data[col].reindex(index - pd.Timedelta(hours=lag)).values
+        return pd.DataFrame(lag_data, index=index)
 
     def data_split(self, target_cols):
         x = self.data.drop([self.prices_col] + self.demand_cols, axis=1)
@@ -256,8 +287,9 @@ class Forecast:
             model_name: Model type ('xgb', 'rf', 'naive').
             target: What to predict ('demand' or 'price').
             **model_params: Model-specific hyperparameters, e.g.:
-                - naive: n_weeks=4
+                - naive: n_weeks=4 (averaging window)
                 - xgb/rf: random_state=42, n_estimators=100, max_depth=5, etc.
+                  n_weeks here is consumed by preprocess(), not passed to the regressor - see preprocess()'s docstring.
         """
         if model_name not in self.models:
             raise ValueError(f"Unknown model: {model_name}. Available: {list(self.models.keys())}")
@@ -268,6 +300,8 @@ class Forecast:
                 raise ValueError("Naive model requires buffer. Pass buffer to Forecast.__init__().")
             reg = self.models[model_name](buffer=self.buffer, **model_params)
         else:
+            # n_weeks controls lag feature generation in preprocess(), not a regressor kwarg
+            model_params = {k: v for k, v in model_params.items() if k != 'n_weeks'}
             # Use self.random_state as default for reproducibility
             if 'random_state' not in model_params:
                 model_params = {**model_params, 'random_state': self.random_state}
@@ -321,6 +355,10 @@ class Forecast:
 
         # Add datetime features
         forecast_features = self.construct_datetime_features(forecast_df, holiday_country=self.holiday_country)
+        if self.n_weeks:
+            forecast_features = pd.concat(
+                [forecast_features, self.get_week_lag_values(forecast_features.index, self.n_weeks)], axis=1
+            )
 
         # Generate predictions
         price_pred = self.predict(forecast_features, target="price")

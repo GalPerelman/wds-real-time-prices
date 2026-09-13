@@ -46,7 +46,7 @@ def train_forecaster(training_data, prices_col, demand_cols, model_name='xgb', h
     """
     f = forecast.Forecast(training_data=training_data, prices_col=prices_col, demand_cols=demand_cols,
                           holiday_country=holiday_country, buffer=buffer, random_state=random_state)
-    f.preprocess()
+    f.preprocess(n_weeks=model_params.get('n_weeks', 0))
     f.fit(model_name=model_name, target="demand", **model_params)
     f.fit(model_name=model_name, target="price", **model_params)
     return f
