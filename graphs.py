@@ -436,6 +436,8 @@ def plot_predicted_vs_realized(panels, figsize=None):
         ax.text(0.02, 0.82, f'MAE={mae:.2f}', transform=ax.transAxes, horizontalalignment='left')
 
     axes[-1].set_xlabel('Time')
+    _loc = mdates.AutoDateLocator()
+    axes[-1].xaxis.set_major_locator(_loc)
     fig.align_ylabels()
     plt.subplots_adjust(left=0.15, right=0.95, top=0.95, bottom=0.08)
     return fig, axes

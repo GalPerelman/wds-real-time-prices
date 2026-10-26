@@ -299,7 +299,7 @@ class BaseOptModel:
         elec_demand_data.index = pd.to_datetime(elec_demand_data.index, dayfirst=True)
         return elec_demand_data
 
-    def get_ellipsoid_uncertainty_set(self, start_hour, plot=False):
+    def get_ellipsoid_uncertainty_set(self, start_hour):
         """
         Extract mu and Sigma from pre-fitted uset_estimator for the given start_hour.
         Used by RO and sampling-based methods (SP).
@@ -311,12 +311,6 @@ class BaseOptModel:
         self.mu, self.sigma = u.mu, u.Sigma
         self.delta = np.asarray(np.linalg.cholesky(self.sigma).astype(np.float64))
         self.p = int(self.sigma.shape[0])
-
-        if plot:
-            plt.imshow(sigma[:self.t, :self.t], cmap='viridis')
-            plt.figure()
-            plt.imshow(sigma[self.t:, self.t:], cmap='viridis')
-            plt.show()
 
 
 def extract_problem_stats(model):
