@@ -6,15 +6,49 @@ import numpy as np
 import pandas as pd
 import wntr
 import matplotlib.pyplot as plt
-from scipy.interpolate import UnivariateSpline
-from scipy.optimize import curve_fit
-
-import utils
+from sklearn.cluster import KMeans
+from sklearn.preprocessing import StandardScaler
 
 
-class NLPNetwork:
+def write_demand_patterns(csv_path, inp_path, output_path, pattern_timestep=3600):
     """
-    Not in use for now
+    Read a CSV with one column per junction (absolute demand values in CMH),
+    write each column as a pattern assigned to that junction with base demand
+    of 1 CMH (so the pattern multipliers equal the CMH demand values), and
+    export the resulting network to output_path.
+
+    example usage:
+    write_demand_patterns(csv_path="data/two_mains/demand_patterns.csv",
+    #                     inp_path="data/two_mains/two_mains.inp",
+    #                     output_path="data/two_mains/two_mains_dem.inp")
+    """
+    df = pd.read_csv(csv_path)
+    wn = wntr.network.WaterNetworkModel(inp_path)
+    wn.options.time.pattern_timestep = pattern_timestep
+    wn.options.time.duration = len(df) * pattern_timestep
+
+    base_value = 1.0 / 3600.0
+    for junction_id in df.columns:
+        junction_id = str(junction_id)
+        junction = wn.get_node(junction_id)
+
+        pattern_name = f"{junction_id}"
+        multipliers = df[junction_id].tolist()
+        if pattern_name in wn.pattern_name_list:
+            wn.get_pattern(pattern_name).multipliers = multipliers
+        else:
+            wn.add_pattern(pattern_name, multipliers)
+
+        junction.demand_timeseries_list.clear()
+        junction.add_demand(base_value, pattern_name)
+
+    wntr.network.io.write_inpfile(wn, output_path)
+    return wn
+
+
+class HydraulicOperatingPoints:
+    """
+    helper to analyze hydraulics and extract pump operating points
     """
     def __init__(self, inp_path):
         self.inp_path = inp_path
@@ -33,107 +67,50 @@ class NLPNetwork:
         sim = wntr.sim.EpanetSimulator(self.wn)
         return sim.run_sim()
 
-    def generate_bounds(self):
-        wn = copy.deepcopy(self.wn)
-        for ctrl_name in wn.control_name_list:
-            wn.remove_control(ctrl_name)
-        for pump_name, pump in wn.pumps():
-            pump.initial_status = 1
-
-        sim = wntr.sim.EpanetSimulator(wn)
-        temp_results = sim.run_sim()
-
-        links_min_flow = temp_results.link["flowrate"].min(axis=0) * 3600
-        links_max_flow = temp_results.link["flowrate"].max(axis=0) * 3600
-        return links_min_flow, links_max_flow
-
-    def get_pump_head_curve(self, pump_id):
-        pump = self.wn.get_link(pump_id)
-        curve_points = pump.get_pump_curve().points
-        if len(curve_points) == 1:
-            q, h = curve_points[0][0] * 3600, curve_points[0][1]
-            xdata = [0, q, 2 * q]
-            ydata = [(4/3) * h, h, 0]
+    def _pump_efficiency(self, pump_name, flow):
+        """
+        Interpolate pump efficiency (fraction) from its EFFICIENCY curve at the given flow values (m3/s).
+        Flow <= 0 maps to efficiency 0 without interpolation.
+        Flow outside the curve's range is clamped to the nearest endpoint efficiency. If the pump has
+        no EFFICIENCY curve, use EPANET's constant Global Efficiency instead (same fallback EPANET
+        itself applies when a pump has no assigned curve).
+        """
+        flow = np.asarray(flow, dtype=float)
+        eff = np.zeros_like(flow)
+        mask = flow > 0
+        curve = self.wn.get_link(pump_name).efficiency_curve
+        if curve is None:
+            eff[mask] = self.wn.options.energy.global_efficiency / 100.0
         else:
-            xdata = [point[0] * 3600 for point in curve_points]
-            ydata = [point[1] for point in curve_points]
+            points = sorted(curve.points)
+            xs = np.array([p[0] for p in points])
+            ys = np.array([p[1] for p in points]) / 100.0
+            eff[mask] = np.interp(flow[mask], xs, ys)
+        return eff
 
-        def pump_poly(x, a, b):
-            return a - b * (x ** 2)
-
-        popt, pcov = curve_fit(pump_poly, xdata, ydata)
-        a, b = popt
-        return a, b
-
-    def piecewise_linear(self, n_pl):
-        # pipes
-        pipes_pl = {}
-        length = self.wn.query_link_attribute(attribute="length")
-        diameter = self.wn.query_link_attribute(attribute="diameter")
-        c_hw = self.wn.query_link_attribute(attribute="roughness")
-
-        links_min_flow, links_max_flow = self.generate_bounds()
-        pipes = pd.concat([length, diameter, c_hw, links_min_flow, links_max_flow], axis=1, join="inner")
-        pipes.columns = ["length", "diameter", "roughness", "min_flow", "max_flow"]
-        pipes["r"] = ((1.1311 * (10 ** 9)) * ((1 / pipes["roughness"]) ** 1.852)
-                      * ((1 / (pipes["diameter"] * 1000)) ** 4.87) * pipes["length"])
-
-        for pipe_id, row in pipes.iterrows():
-            if self.wn.get_link(pipe_id).cv:
-                continue
-            x = np.linspace(row['min_flow'], row["max_flow"], n_pl)
-            h = row["r"] * x * (np.abs(x)) ** 0.852
-            head_points = UnivariateSpline(x, h, k=1, s=0)
-            pl = {}
-            for i in range(len(x)):
-                pl[i] = {'flow': x[i], 'head': float(head_points(x[i]))}
-            pipes_pl[pipe_id] = pl
-
-        # pumps
-        pumps_pl = {}
-        for pump_id, pump in self.wn.pumps():
-            a, b = self.get_pump_head_curve(pump_id)
-            x = np.linspace(links_min_flow.loc[pump_id], links_max_flow.loc[pump_id], n_pl)
-            h = a - b * (x ** 2)
-
-            head_points = UnivariateSpline(x, h, k=1, s=0)
-            pl = {}
-            for i in range(len(x)):
-                pl[i] = {'flow': x[i], 'head': float(head_points(x[i]))}
-            pumps_pl[pump_id] = pl
-
-    def plot_sim_results(self, element_type, param):
-        if element_type in ["pipe", "pump", "valve"]:
-            y = self.sim_results.link[param].loc[:, self.all_elements[element_type][:15]]
-        if element_type in ["junction", "tank", "reservoir"]:
-            y = self.sim_results.node[param].loc[:, self.all_elements[element_type]]
-
-        n = len(y.columns)
-        ncols = max(1, int(math.ceil(math.sqrt(n))))
-        nrows = max(1, int(math.ceil(n / ncols)))
-
-        fig, axes = plt.subplots(nrows=nrows, ncols=ncols, sharex=True, figsize=(8, 4))
-        axes = np.atleast_2d(axes).ravel()
-
-        for i, col in enumerate(y.columns):
-            axes[i].plot(y.iloc[:, i])
-            axes[i].set_title(col)
-            axes[i].grid()
-
-    def plot_pumps_operational_points(self):
-        # deactivate all controls
+    def plot_pumps_operational_points(self, remove_controls=True, all_pumps_on=True):
         wn = copy.deepcopy(self.wn)
-        # for ctrl_name in wn.control_name_list:
-        #     wn.remove_control(ctrl_name)
-        # for pump_name, pump in wn.pumps():
-        #     pump.initial_status = 1
-        #     pump._status = 1
+        if remove_controls:
+            for ctrl_name in wn.control_name_list:
+                wn.remove_control(ctrl_name)
+        if all_pumps_on:
+            for pump_name, pump in wn.pumps():
+                pump.initial_status = 1
+                pump._status = 1
 
         sim = wntr.sim.EpanetSimulator(wn)
         temp_results = sim.run_sim()
 
-        q = temp_results.link["flowrate"].loc[:, self.all_elements["pump"]]
-        h = - temp_results.link["headloss"].loc[:, self.all_elements["pump"]]
+        q = temp_results.link["flowrate"].loc[:, self.all_elements["pump"]].round(4)
+        h = - temp_results.link["headloss"].loc[:, self.all_elements["pump"]].round(4)
+
+        power = pd.DataFrame(0.0, index=q.index, columns=q.columns)
+        for pump_name in q.columns:
+            eff = self._pump_efficiency(pump_name, q[pump_name].values)
+            mask = eff > 0
+            # kW, efficiency from pump curve
+            power.loc[mask, pump_name] = (9810 * q.loc[mask, pump_name] * h.loc[mask, pump_name] / (eff[mask] * 1000))
+
         n = len(q.columns)
         ncols = max(1, int(math.ceil(math.sqrt(n))))
         nrows = max(1, int(math.ceil(n / ncols)))
@@ -150,18 +127,78 @@ class NLPNetwork:
         fig.supxlabel('Flow (CMH)')
         fig.subplots_adjust(left=0.1, bottom=0.15)
 
-        fig, axes = plt.subplots(nrows=2)
-        q = q[q > 0]
-        axes[0].boxplot(q * 3600)
+        fig, axes = plt.subplots(nrows=3, figsize=(8, 5))
+
+        q = q.where(q > 0)
+        power = power.where(power > 0)
+
+        axes[0].boxplot([col.dropna().values * 3600 for _, col in q.items()], labels=q.columns)
         axes[0].set_ylabel('Flow (CMH)')
         axes[0].set_xlabel('Pump')
-        print(pd.DataFrame(q * 3600).describe())
+
+        axes[1].boxplot([col.dropna().values for _, col in power.items()], labels=power.columns)
+        axes[1].set_ylabel('Power (kW)')
+        axes[1].set_xlabel('Pump')
+        print(pd.DataFrame(q).describe())
+        print(pd.DataFrame(power).describe())
 
         df = pd.DataFrame(q * 3600).describe()
         df = df.round(1)
-        pd.plotting.table(axes[1], df, loc='center')
-        axes[1].axis('off')
-        fig.subplots_adjust(left=0.1, bottom=0.1, hspace=0.3, top=0.95, right=0.95)
+        pd.plotting.table(axes[2], df, loc='center')
+        axes[2].axis('off')
+        fig.subplots_adjust(left=0.1, bottom=0.08, hspace=0.5, top=0.96, right=0.95)
+
+        stations = {}
+        for pump_name in self.all_elements['pump']:
+            pump = self.wn.get_link(pump_name)
+            key = (pump.start_node_name, pump.end_node_name)
+            stations.setdefault(key, []).append(pump_name)
+
+        n_st = len(stations)
+        ncols = max(1, int(math.sqrt(n_st))) + 1
+        nrows = math.ceil(n_st / ncols)
+        fig, axes = plt.subplots(nrows, ncols, squeeze=False, figsize=(ncols * 3, nrows * 1.8))
+        axes = axes.ravel()
+
+        operating_points = {}
+        for ax, ((suction, discharge), pump_names) in zip(axes, stations.items()):
+            station_q = q[pump_names].sum(axis=1) * 3600   # CMH; NaN (pump off) treated as 0
+            station_p = power[pump_names].sum(axis=1)       # kW
+
+            mask = station_q > 0
+            flow_vals = station_q[mask].values
+            power_vals = station_p[mask].values
+            ax.scatter(flow_vals, power_vals, alpha=0.5, s=10)
+
+            station_name = pump_names[0][:3].upper()
+            n_clusters = min(len(pump_names), len(flow_vals))
+            if n_clusters > 0:
+                x = np.column_stack([flow_vals, power_vals])
+                scaler = StandardScaler()
+                x_scaled = scaler.fit_transform(x)
+                kmeans = KMeans(n_clusters=n_clusters, n_init=10, random_state=42).fit(x_scaled)
+                centers = scaler.inverse_transform(kmeans.cluster_centers_)
+                centers = centers[centers[:, 0].argsort()]
+                ax.scatter(centers[:, 0], centers[:, 1], color='red', marker='o', s=50,
+                           edgecolors='k', linewidths=0.5, zorder=5, label='operating points')
+                ax.legend(fontsize=7)
+                operating_points[station_name] = pd.DataFrame(centers, columns=['flow_cmh', 'power_kw'])
+
+            ax.set_xlabel('Flow (CMH)', fontsize=10)
+            ax.set_ylabel('Power (kW)', fontsize=10)
+            ax.set_title(station_name, fontsize=10)
+            ax.grid()
+
+        fig.suptitle('Pump stations operating points K-Means Clustering', fontsize=10)
+        fig.tight_layout()
+        all_points = pd.concat(operating_points, names=['station', 'combo']).reset_index()
+        all_points['combo'] += 1
+        all_points = all_points[['station', 'combo', 'flow_cmh', 'power_kw']].round(1)
+
+        print('\nAll stations operating points:')
+        print(all_points.to_string(index=False))
+
+        return operating_points
 
 
 class LPNetwork:
@@ -229,7 +266,9 @@ class LPNetwork:
 
 
 if __name__ == "__main__":
-    net = NLPNetwork("data/multi_tank.inp")
-    net.piecewise_linear(n_pl=4)
+    net = HydraulicOperatingPoints("data/price_ostfeld/price_ostfeld.inp")
+    net.plot_pumps_operational_points()
+
+    net = HydraulicOperatingPoints("data/two_mains/two_mains.inp")
     net.plot_pumps_operational_points()
     plt.show()
