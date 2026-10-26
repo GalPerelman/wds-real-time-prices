@@ -1759,26 +1759,3 @@ def graphical_abstract(tariffs_paths, labels, colors=None, start=None, end=None,
     ax.set_yticklabels([])
     fig.subplots_adjust(left=0.1, right=0.95, top=0.95)
     plt.savefig('transparent_plot.png', transparent=True)
-
-
-if __name__ == "__main__":
-    # Example usage of the MPCGraphs class with sample data
-    from network import LPNetwork
-    import pandas as pd
-
-    net = LPNetwork('data/multi_tank')
-    traj = pd.read_csv('mpc_trajectories.csv')
-
-    g = MPCGraphs(traj, net)
-    g.plot_hydraulic_accuracy(methods=['LP', 'omega=2.0', 'alpha=[0.9, 0.9]'])
-    g.plot_energy_accuracy(methods=['LP', 'omega=2.0', 'alpha=[0.9, 0.9]'])
-    g.plot_hydraulic_scatter()
-
-    group_styles = {
-        'LP': {'color': '#333333', 'marker': 's'},
-        'RO-Ellipsoid': {'color': '#105A7F', 'marker': 'o'},
-        'CC-SP': {'color': '#FF9E00', 'marker': 'o'},
-    }
-
-    g.plot_por(pd.read_csv('mpc_summary.csv'), group_styles=group_styles)
-    plt.show()
