@@ -1,0 +1,53 @@
+data:
+  # data files need to have a datetime index column with time zone aware format
+  network_path: "data/two_mains"
+  demands_path: "data/two_mains/demands.csv"
+  tariffs_path: "data/two_mains/tariffs-tou.csv"
+
+columns:
+  prices_col: "tariff"  # correspond to Volume Weighted Average Price column from the raw dataset
+  demand_cols: ["a", "b", "c", "d", "e", "f"]
+
+training:
+  forecast:
+    start: "2021-01-01"
+    end: "2022-12-31"
+  uncertainty:
+    start: "2022-10-01"
+    end: "2022-12-31"
+
+forecast:
+  model: "oracle"
+  holiday_country: "HU"
+
+experiment:
+  type: "mpc_sweep"
+
+  experiment_period:
+    start: "2023-01-01 00:00"
+    horizon: 744 # 31 days
+
+  mpc:
+    step_horizon: 24  # lookahead window (hours)
+    wait: 1           # hours between re-optimizations (implemented steps)
+
+  methods:
+    - group: "LP"
+      opt_method: "lp"
+
+  options:
+    milp: true
+    plot: false
+    output_dir: "outputs/02_jan2023_tou_oracle"
+    export_inp: true
+    final_vol_constraint: false
+
+    simulator:
+      inp_file: "data/two_mains/two_mains.inp"
+
+    n_binary_steps: 24
+
+    solver_params:
+      solver_display: false
+      TimeLimit: 180
+      Threads: 4
