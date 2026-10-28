@@ -6,7 +6,7 @@ data:
   # data files need to have a datetime index column with time zone aware format
   network_path: "data/price_ostfeld"
   demands_path: "data/price_ostfeld/demands.csv"
-  tariffs_path: "data/price_ostfeld/tariffs.csv"
+  tariffs_path: "data/price_ostfeld/tariffs-hu.csv"
 
 columns:
   prices_col: "tariff"
@@ -14,7 +14,7 @@ columns:
 
 training:
   forecast:
-    start: "2022-01-01"
+    start: "2021-01-01"
     end: "2022-09-30"
   uncertainty:
     start: "2022-08-01"
@@ -23,13 +23,17 @@ training:
 forecast:
   model: "xgb"
   holiday_country: "HU"
+  params:
+    n_estimators: 100
+    max_depth: 5
+    learning_rate: 0.05
 
 experiment:
   type: "por"
 
   forecast_period:
-    start: "2022-10-02"
-    end: "2022-10-03"
+    start: "2022-10-04"
+    end: "2022-10-05"
 
   methods:
     - group: "RO-Ellipsoid"
@@ -44,18 +48,19 @@ experiment:
       params:
         uncertainty_set: "bou"
       sweep:
-        gamma: [ [0, 2], [0, 4], [0, 6], [0, 8], [0, 10], [0, 12], [0, 14], [0, 16], [0, 18] ]
+        gamma: [ [4, 2], [4, 4], [4, 6], [4, 8], [4, 10], [4, 12], [4, 14], [4, 16], [4, 18] ]
 
     # SAA (Stochastic Programming) - sweep alpha (start, end) pairs
-    - group: "CC-SP"
+    - group: "CCO"
       opt_method: "sp"
       sweep:
         alpha: [[0.80, 0.8], [0.85, 0.85], [0.90, 0.9], [0.95, 0.95], [0.99, 0.99], [0.995, 0.995]]
 
-    - group: "CC-SP-relaxed"
+    - group: "CCO-CVaR"
       opt_method: "sp"
       sweep:
-        alpha: [[0.80, 0.75], [0.85, 0.8], [0.90, 0.85], [0.95, 0.9], [0.99, 0.94], [0.995, 0.945]]
+        alpha: [ [ 0.80, 0.8 ], [ 0.85, 0.85 ], [ 0.90, 0.9 ], [ 0.95, 0.95 ], [ 0.99, 0.99 ], [ 0.995, 0.995 ] ]
+        lambda_cvar: [1]
 
   simulation:
     n_samples: 500
@@ -64,6 +69,8 @@ experiment:
     milp: true
     plot: true
     t: 24
+
+    sampling_method: normal
     omega_to_alpha: subgaussian   # subgaussian or gaussian
     stat_analyze: true
     solver_params:  # gurobi solver parameters

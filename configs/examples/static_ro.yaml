@@ -5,7 +5,7 @@ data:
   # data files need to have a datetime index column with time zone aware format
   network_path: "data/price_ostfeld"
   demands_path: "data/price_ostfeld/demands.csv"
-  tariffs_path: "data/price_ostfeld/tariffs.csv"
+  tariffs_path: "data/price_ostfeld/tariffs-hu.csv"
 
 columns:
   prices_col: "tariff"
@@ -17,21 +17,26 @@ training:
     end: "2022-09-30"
   uncertainty:
     start: "2022-06-01"
-    end: "2022-07-31"
+    end: "2022-09-30"
 
 forecast:
-  model: "xgb"
+  model: "naive"
   holiday_country: "HU"
+  params:
+    n_weeks: 4
 
 experiment:
   type: "static"
 
   forecast_period:
-    start: "2022-10-01"
-    end: "2022-10-01 23:00"
+    start: "2022-10-20"
+    end: "2022-10-21"
 
   model:
-    opt_method: "lp"
+    opt_method: "RO"
+    params:
+      omega: 1.0
+      uncertainty_set: "ellipsoid"
 
   simulation:
     n_samples: 500

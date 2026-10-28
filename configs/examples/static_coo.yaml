@@ -1,0 +1,44 @@
+# Static Optimization Experiment
+# Run a single RO optimization with Monte Carlo simulation
+
+data:
+  network_path: "data/price_ostfeld"
+  demands_path: "data/price_ostfeld/demands.csv"
+  tariffs_path: "data/price_ostfeld/tariffs-hu.csv"
+
+columns:
+  prices_col: "tariff"
+  demand_cols: ["a", "b", "c"]
+
+training:
+  forecast:
+    start: "2022-01-01"
+    end: "2022-09-30"
+  uncertainty:
+    start: "2022-06-01"
+    end: "2022-07-31"
+
+forecast:
+  model: "xgb"
+  holiday_country: "HU"
+
+experiment:
+  type: "static"
+
+  forecast_period:
+    start: "2022-10-02"
+    end: "2022-10-03"
+
+  model:
+    opt_method: "sp"
+    params:
+      alpha: [0.90, 0.85]  # (alpha_start, alpha_end) - confidence levels
+      sampling_method: "normal"
+
+  simulation:
+    n_samples: 500
+
+  options:
+    milp: true
+    plot: true
+    t: 24
