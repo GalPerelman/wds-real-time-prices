@@ -165,6 +165,8 @@ def to_latex_label(s):
             var = r'\Gamma'
         elif var.lower() == 'lambda_cvar':
             var = r'\lambda'
+        else:
+            var = var.replace('_', r'\_')
 
         parts.append(f"{var}={val}")
 
