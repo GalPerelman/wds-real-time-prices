@@ -157,6 +157,7 @@ class HydraulicOperatingPoints:
         n_st = len(stations)
         ncols = max(1, int(math.sqrt(n_st))) + 1
         nrows = math.ceil(n_st / ncols)
+        n_axes = nrows * ncols
         fig, axes = plt.subplots(nrows, ncols, squeeze=False, figsize=(ncols * 3, nrows * 1.8))
         axes = axes.ravel()
 
@@ -188,6 +189,9 @@ class HydraulicOperatingPoints:
             ax.set_ylabel('Power (kW)', fontsize=10)
             ax.set_title(station_name, fontsize=10)
             ax.grid()
+
+        for i in range(len(stations), n_axes):
+            axes[i].axis('off')
 
         fig.suptitle('Pump stations operating points K-Means Clustering', fontsize=10)
         fig.tight_layout()
@@ -267,8 +271,8 @@ class LPNetwork:
 
 if __name__ == "__main__":
     net = HydraulicOperatingPoints("data/price_ostfeld/price_ostfeld.inp")
-    net.plot_pumps_operational_points()
+    net.plot_pumps_operational_points(remove_controls=False)
 
     net = HydraulicOperatingPoints("data/two_mains/two_mains.inp")
-    net.plot_pumps_operational_points()
+    net.plot_pumps_operational_points(remove_controls=False)
     plt.show()
