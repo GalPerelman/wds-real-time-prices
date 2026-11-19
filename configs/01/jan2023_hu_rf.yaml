@@ -20,6 +20,8 @@ training:
 forecast:
   model: "rf"
   holiday_country: "HU"
+  params:
+    n_weeks: 4
 
 experiment:
   type: "mpc_sweep"
