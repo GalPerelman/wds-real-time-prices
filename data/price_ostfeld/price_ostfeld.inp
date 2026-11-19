@@ -5229,14 +5229,47 @@
 
 [CURVES]
 ;ID              	X-Value     	Y-Value
-;PUMP: PUMP: PUMP: aP
+;PUMP: PUMP: PUMP: PUMP: aP
  aP              	625.000000  	60.000000   
-;PUMP: PUMP: PUMP: aW
+;PUMP: PUMP: PUMP: PUMP: aW
  aW              	500         	150.000000  
-;PUMP: PUMP: PUMP: bP
+;PUMP: PUMP: PUMP: PUMP: bP
  bP              	200         	150.000000  
-;PUMP: PUMP: PUMP: cP
+;PUMP: PUMP: PUMP: PUMP: cP
  cP              	125         	150.000000  
+;EFFICIENCY: 
+ aPeff           	480         	53.7        
+ aPeff           	545         	72.7        
+ aPeff           	580         	81.8        
+ aPeff           	625         	84          
+ aPeff           	650         	80.7        
+ aPeff           	680         	73          
+;EFFICIENCY: 
+ aWeff           	244         	63.6        
+ aWeff           	353         	78.4        
+ aWeff           	414.6       	82.7        
+ aWeff           	500         	86.3        
+ aWeff           	597         	79.2        
+ aWeff           	658         	70.8        
+;EFFICIENCY: 
+ bPeff           	92.22       	62.5        
+ bPeff           	138.8       	77.2        
+ bPeff           	181.5       	84.4        
+ bPeff           	200         	85          
+ bPeff           	219.8       	82.3        
+ bPeff           	236.4       	77.7        
+ bPeff           	255         	71          
+;EFFICIENCY: 
+ cPeff           	45.7        	53.7        
+ cPeff           	60.2        	65.5        
+ cPeff           	74.6        	72.7        
+ cPeff           	89          	77.3        
+ cPeff           	103.4       	81.8        
+ cPeff           	117.88      	83.5        
+ cPeff           	125         	84          
+ cPeff           	132.3       	83.6        
+ cPeff           	146.7       	80.7        
+ cPeff           	160         	71.6        
 
 [CONTROLS]
 Pump 3 Open IF Tank 14 below 3.0
@@ -5250,7 +5283,9 @@ Pump 4 Closed IF Tank 15 above 8.0
 
 
 
+
 [RULES]
+
 
 
 
@@ -5258,6 +5293,10 @@ Pump 4 Closed IF Tank 15 above 8.0
  Global Efficiency  	75.0000
  Global Price       	0.0000
  Demand Charge      	0.0000
+ Pump 	1               	Efficiency	aPeff
+ Pump 	2               	Efficiency	aWeff
+ Pump 	3               	Efficiency	bPeff
+ Pump 	4               	Efficiency	cPeff
 
 [EMITTERS]
 ;Junction        	Coefficient
