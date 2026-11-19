@@ -124,7 +124,7 @@ class HydraulicOperatingPoints:
             axes[i].grid(zorder=0)
 
         fig.supylabel('Head (m)')
-        fig.supxlabel('Flow (CMH)')
+        fig.supxlabel('Flow ($m^3$)')
         fig.subplots_adjust(left=0.1, bottom=0.15)
 
         fig, axes = plt.subplots(nrows=3, figsize=(8, 5))
@@ -133,7 +133,7 @@ class HydraulicOperatingPoints:
         power = power.where(power > 0)
 
         axes[0].boxplot([col.dropna().values * 3600 for _, col in q.items()], labels=q.columns)
-        axes[0].set_ylabel('Flow (CMH)')
+        axes[0].set_ylabel('Flow ($m^3$)')
         axes[0].set_xlabel('Pump')
 
         axes[1].boxplot([col.dropna().values for _, col in power.items()], labels=power.columns)
@@ -180,12 +180,12 @@ class HydraulicOperatingPoints:
                 kmeans = KMeans(n_clusters=n_clusters, n_init=10, random_state=42).fit(x_scaled)
                 centers = scaler.inverse_transform(kmeans.cluster_centers_)
                 centers = centers[centers[:, 0].argsort()]
-                ax.scatter(centers[:, 0], centers[:, 1], color='red', marker='o', s=50,
+                ax.scatter(centers[:, 0], centers[:, 1], color='red', marker='d', s=25,
                            edgecolors='k', linewidths=0.5, zorder=5, label='operating points')
                 ax.legend(fontsize=7)
                 operating_points[station_name] = pd.DataFrame(centers, columns=['flow_cmh', 'power_kw'])
 
-            ax.set_xlabel('Flow (CMH)', fontsize=10)
+            ax.set_xlabel('Flow ($m^3$)', fontsize=10)
             ax.set_ylabel('Power (kW)', fontsize=10)
             ax.set_title(station_name, fontsize=10)
             ax.grid()
