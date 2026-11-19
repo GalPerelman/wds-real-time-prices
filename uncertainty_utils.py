@@ -431,6 +431,71 @@ class SpatioTemporalEllipsoidUncertaintyEstimator:
         raise ValueError(f"Unknown method='{method}'")
 
 
+class ForecastErrorUncertaintyEstimator(SpatioTemporalEllipsoidUncertaintyEstimator):
+    """
+    Estimate mu and Sigma of forecast errors, indexed by (variable, hour of day):
+        e = [var1(h=0..23), var2(h=0..23), ..., varK(h=0..23)]  in R^{24*K}
+
+    Input is a hindcast error array (see forecast.Hindcast): one 24-h forecast per hourly issue time.
+    Each forecast covers every clock hour exactly once, so its errors are re-ordered from lead order
+    to hour-of-day order and every issue time gives one sample vector. Sigma is the plain sample
+    covariance over all issue times; mu is the mean error (forecast bias).
+
+    Same stacking order and outputs as the parent class, so rotate_to_start_hour, extract_horizon
+    (recompute=False) and get_uncertainty_set are reused unchanged. There is a single Sigma, so
+    use_residuals has no effect.
+    """
+    def __init__(self, hours_per_window: int = 24):
+        super().__init__(variables=None, hours_per_window=hours_per_window,
+                         drop_incomplete_windows=True, seasonal_demean=False)
+
+    def fit(self, errors: np.ndarray, issue_times: pd.DatetimeIndex,
+            variables: List[str]) -> "ForecastErrorUncertaintyEstimator":
+        """
+        Args:
+            errors: ndarray (n_issue_times, horizon, n_variables), actual - forecast, lead 0 = issue hour.
+            issue_times: DatetimeIndex of the issue times, length n_issue_times.
+            variables: Variable names in the order of the last axis of errors.
+        """
+        N, T, K = errors.shape
+        H = self.hours_per_window
+        if T != H:
+            raise ValueError(f"Hindcast horizon ({T}) must equal hours_per_window ({H}) so that each "
+                             f"forecast covers every hour of the day once.")
+        self.variables_ = list(variables)
+
+        # Lead order -> hour-of-day order: clock hour h of a forecast issued at hour s is lead (h - s) mod H
+        issue_hours = np.asarray(issue_times.hour)
+        lead_of_hour = (np.arange(H)[None, :] - issue_hours[:, None]) % H     # (N, H)
+        cube = np.take_along_axis(errors, lead_of_hour[:, :, None], axis=1)   # (N, H, K)
+        cube = cube.transpose(0, 2, 1)                                         # (N, K, H)
+
+        self._cube_ = cube
+        self._K_ = K
+        self._H_ = H
+        self.baseline_ = None
+
+        Y = self._vec_stack(cube)                                              # (N, K*H)
+        self.mu_raw_ = Y.mean(axis=0)
+        self.Sigma_raw_ = np.cov(Y, rowvar=False)
+        self.mu_resid_ = self.mu_raw_
+        self.Sigma_resid_ = self.Sigma_raw_
+
+        self._index_map_ = self._build_index_map()
+        return self
+
+    def extract_horizon(self, horizon: int, start_hour: int = 0, use_residuals: bool = True,
+                        recompute: bool = False) -> UncertaintyResult:
+        """
+        Rotate then select the first `horizon` hours (parent behaviour). recompute=True is not supported:
+        the parent's recompute path builds windows from consecutive calendar days, not issue times.
+        """
+        if recompute:
+            raise NotImplementedError("recompute=True is not supported for the forecast-error Sigma.")
+        return super().extract_horizon(horizon, start_hour=start_hour, use_residuals=use_residuals,
+                                       recompute=False)
+
+
 class Sampler:
     def __init__(self, mu, cov, p, t, n: int, data=None, seed: int = 42):
         self.mu = mu

@@ -52,6 +52,53 @@ def train_forecaster(training_data, prices_col, demand_cols, model_name='xgb', h
     return f
 
 
+def build_uncertainty_estimator(config, dm):
+    """
+    Fit the uncertainty estimator selected by config.training.uncertainty.source.
+
+    - "observations": SpatioTemporalEllipsoidUncertaintyEstimator on the observed prices and demands of the
+      `uncertainty` window (original implementation).
+    - "forecast_errors": ForecastErrorUncertaintyEstimator on hindcast errors. A forecaster with the same model
+      and params as the MPC (config.forecast) is trained from training.forecast.start up to
+      training.uncertainty.start and replayed over the `uncertainty` window (forecast.Hindcast).
+    - forecast.model "oracle": returns None (see comment below).
+    """
+    # Oracle is a perfect-foresight LP benchmark: no uncertainty set is needed, so no estimator is built.
+    # Uncertainty-aware methods (RO/SP) with oracle fail at BaseOptModel.get_ellipsoid_uncertainty_set.
+    if config.forecast.model == "oracle":
+        return None
+    source = config.training.uncertainty.source
+    if source == "observations":
+        estimator = uncertainty_utils.SpatioTemporalEllipsoidUncertaintyEstimator(
+            seasonal_demean=True, drop_incomplete_windows=True
+        )
+        estimator.fit(dm.uncertainty_training_data)
+        return estimator
+
+    if source == "forecast_errors":
+        unc_start = pd.Timestamp(config.training.uncertainty.start)
+        train = dm.data.loc[(dm.data.index >= pd.Timestamp(config.training.forecast.start))
+                            & (dm.data.index < unc_start)]
+        buffer = forecast.RealizationsBuffer(train)
+        forecaster = train_forecaster(
+            training_data=train,
+            prices_col=config.columns.prices_col,
+            demand_cols=config.columns.demand_cols,
+            model_name=config.forecast.model,
+            holiday_country=config.forecast.holiday_country,
+            buffer=buffer,
+            **config.forecast.get('params', {})
+        )
+        estimator = uncertainty_utils.ForecastErrorUncertaintyEstimator()
+        hindcast = forecast.Hindcast(forecaster, realizations=dm.data, horizon=estimator.hours_per_window)
+        hindcast.run(config.training.uncertainty.start, config.training.uncertainty.end)
+        estimator.fit(hindcast.errors, hindcast.issue_times, hindcast.variables)
+        return estimator
+
+    raise ValueError(f"Unknown training.uncertainty.source: '{source}'. "
+                     f"Use 'observations' or 'forecast_errors'.")
+
+
 def plot_forecast_comparison(forecast_df, actuals_df, demand_cols, prices_col):
     common_index = forecast_df.index.intersection(actuals_df.index)
     forecast_aligned = forecast_df.loc[common_index]
@@ -124,7 +171,7 @@ def run_single_model(model_class, model_params, sim_n, nominal_cost=None, sample
     return result
 
 
-def por(uset_data, forecast, methods, net_path, t=24, n=500, milp=False, plot=True,
+def por(uset_estimator, forecast, methods, net_path, t=24, n=500, milp=False, plot=True,
         sampling_method='normal', seed=42, omega_to_alpha='gaussian', stat_analyze=True,
         final_vol_constraint=True, solver_params=None, n_binary_steps=None):
     """
@@ -132,13 +179,7 @@ def por(uset_data, forecast, methods, net_path, t=24, n=500, milp=False, plot=Tr
     """
     net = LPNetwork(net_path)
 
-    # Fit uncertainty estimator once (reused by all models)
-    uset_estimator = uncertainty_utils.SpatioTemporalEllipsoidUncertaintyEstimator(
-        seasonal_demean=True,
-        drop_incomplete_windows=True
-    )
-    uset_estimator.fit(uset_data)
-
+    # Uncertainty estimator is fitted once by the caller (build_uncertainty_estimator) and reused by all models
     # Common params for all models
     common_params = {
         'network': net,
@@ -647,10 +688,7 @@ def run_mpc_sweep(config_path):
         end_date=config.training.uncertainty.end
     )
 
-    uset_estimator = uncertainty_utils.SpatioTemporalEllipsoidUncertaintyEstimator(
-        seasonal_demean=True, drop_incomplete_windows=True
-    )
-    uset_estimator.fit(dm.uncertainty_training_data)
+    uset_estimator = build_uncertainty_estimator(config, dm)
 
     return _run_mpc_sweep_from_config(config, dm, uset_estimator, config_path=config_path)
 
@@ -672,10 +710,7 @@ def run_from_config(config_path):
     )
 
     # Fit uncertainty estimator
-    uset_estimator = uncertainty_utils.SpatioTemporalEllipsoidUncertaintyEstimator(
-        seasonal_demean=True, drop_incomplete_windows=True
-    )
-    uset_estimator.fit(dm.uncertainty_training_data)
+    uset_estimator = build_uncertainty_estimator(config, dm)
 
     # MPC manages its own internal forecaster and buffer - dispatch directly
     if exp.type == 'mpc':
@@ -751,7 +786,7 @@ def _run_por_from_config(config, dm, forecaster, uset_estimator):
     methods = cfg.expand_methods(exp.methods)
     opts = exp.get('options', {})
     return por(
-        uset_data=dm.uncertainty_training_data,
+        uset_estimator=uset_estimator,
         forecast=forecast_df,
         methods=methods,
         net_path=config.data.network_path,

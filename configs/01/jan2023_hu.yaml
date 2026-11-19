@@ -15,6 +15,7 @@ training:
   uncertainty:
     start: "2022-10-01"
     end: "2022-12-31"
+    source: "forecast_errors"
 
 forecast:
   model: "xgb"
