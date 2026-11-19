@@ -7,6 +7,7 @@ from copy import deepcopy
 import holidays
 import xgboost as xgb
 import lightgbm as lgb
+from tqdm import tqdm
 from sklearn.impute import KNNImputer
 from sklearn.ensemble import RandomForestRegressor
 
@@ -372,3 +373,70 @@ class Forecast:
         )
 
         return result
+
+
+class Hindcast:
+    """
+    Replay a fitted forecaster over a past period as if it were running live, and record its errors.
+
+    For every hourly issue time t0 in the period, the forecaster sees only realizations before t0:
+    the buffer is updated daily at midnight with the previous day, as in MPC.run(). The forecast covers
+    t0..t0+T-1, matching the first T rows used by the optimization models (lead 0 = hour starting at t0).
+    Issue times are limited so that every forecast hour falls inside the period.
+
+    Results are stored as arrays of shape (n_issue_times, horizon, n_variables), variables ordered as
+    [prices_col] + demand_cols.
+    """
+    def __init__(self, forecaster, realizations, horizon):
+        """
+        Args:
+            forecaster: Fitted Forecast instance. Its buffer must hold only data before the hindcast period.
+            realizations: DataFrame with the true values (datetime index, prices_col and demand_cols).
+            horizon: Forecast horizon T in hours.
+        """
+        self.forecaster = forecaster
+        self.buffer = forecaster.buffer
+        self.realizations = realizations
+        self.horizon = horizon
+        self.variables = [forecaster.prices_col] + forecaster.demand_cols
+
+        self.issue_times = None
+        self.forecasts = None
+        self.actuals = None
+        self.errors = None
+
+    def run(self, start, end):
+        """
+        Run the hindcast for hourly issue times from start to end - (horizon - 1) hours.
+
+        Returns:
+            errors: ndarray (n_issue_times, horizon, n_variables), actual - forecast.
+        """
+        start = pd.Timestamp(start)
+        end = pd.Timestamp(end)
+        last_issue = end - pd.Timedelta(hours=self.horizon - 1)
+        self.issue_times = pd.date_range(start=start, end=last_issue, freq='h')
+
+        n_issue = len(self.issue_times)
+        forecasts = np.empty((n_issue, self.horizon, len(self.variables)))
+        actuals = np.empty_like(forecasts)
+
+        for i, t0 in enumerate(tqdm(self.issue_times, desc="Hindcast", unit="issue", ncols=180)):
+            if self.buffer.should_update(t0):
+                prev_day = self.realizations.loc[t0 - pd.Timedelta(hours=24): t0 - pd.Timedelta(hours=1)]
+                self.buffer.update(prev_day)
+
+            # Causality: the forecaster must not see any realization at or after the issue time
+            if self.buffer.data.index[-1] >= t0:
+                raise RuntimeError(f"Buffer holds data up to {self.buffer.data.index[-1]}, "
+                                   f"not before issue time {t0}.")
+
+            t_last = t0 + pd.Timedelta(hours=self.horizon - 1)
+            forecast_df = self.forecaster.generate_forecast(t0, t_last)
+            forecasts[i] = forecast_df[self.variables].values
+            actuals[i] = self.realizations.loc[t0:t_last, self.variables].values
+
+        self.forecasts = forecasts
+        self.actuals = actuals
+        self.errors = actuals - forecasts
+        return self.errors
