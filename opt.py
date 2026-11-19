@@ -575,6 +575,7 @@ class RO(BaseOptModel):
 
             # Linking constraints: theta_ij >= s_i[j] - pi_i
             constraints.append(theta_i >= s_i - pi[i])
+            constraints.append(theta_i >= -s_i - pi[i])
 
         self.problem = cp.Problem(cp.Minimize(self.y), constraints)
 
